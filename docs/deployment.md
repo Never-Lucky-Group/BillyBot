@@ -87,6 +87,16 @@ The repository's history was rewritten for 3.1, so an existing checkout cannot `
    sudo systemctl enable --now billybot
    ```
 
+   Then install the log rotation rule (see [Logs](#logs)). Replace `YOUR_USER` and `/path/to/BillyBot` the same way:
+
+   ```bash
+   sudo cp deploy/billybot.logrotate /etc/logrotate.d/billybot
+   sudo nano /etc/logrotate.d/billybot
+   sudo logrotate --debug /etc/logrotate.d/billybot   # checks the rule; changes nothing
+   ```
+
+   The check should end with `log does not need rotating` and no `error:` lines.
+
 6. Check the logs (below). Startup should show `Found yt-dlp`, `Found ffmpeg` and `Logged in to Discord`, with no errors.
 
 7. Once the bot works, delete the old checkout. It holds the old `config.json`, `spotify_config.json`, token file and `songs/` folder, none of which 3.1 uses:
@@ -113,7 +123,7 @@ Restart the service after changing `.env` or `easter-eggs.json`.
 ## Running the service
 
 ```bash
-sudo systemctl status billybot     # running? last few log lines
+sudo systemctl status billybot     # running? when it last started or crashed
 sudo systemctl restart billybot
 sudo systemctl stop billybot       # also before testing locally with the same token
 sudo systemctl start billybot
@@ -121,15 +131,30 @@ sudo systemctl start billybot
 
 ### Logs
 
-The bot logs JSON lines to the journal. To read them:
+The bot writes its logs as JSON lines to `billybot.log` in its folder. systemd's own messages about the service (started, stopped, crashed and restarted) are in the journal. To read them:
 
 ```bash
-journalctl -u billybot -f                         # follow, raw JSON
-journalctl -u billybot -f -o cat | npx --yes pino-pretty # follow, readable
-journalctl -u billybot --since "1 hour ago" -o cat | npx --yes pino-pretty
+tail -F ~/BillyBot/billybot.log | npx --yes pino-pretty      # follow, readable
+npx --yes pino-pretty < ~/BillyBot/billybot.log | less -R    # the whole current log
+zcat ~/BillyBot/billybot.log.1.gz | npx --yes pino-pretty    # the previous log
+journalctl -u billybot                                       # starts, stops, crashes
 ```
 
+`pino-pretty` is not installed on the server (`npm ci --omit=dev` leaves it out), so `npx --yes` downloads it the first time.
+
 Set `LOG_LEVEL=debug` in `.env` to also log voice connection changes and broken pipes between yt-dlp and ffmpeg.
+
+#### Log rotation
+
+`/etc/logrotate.d/billybot` (from `deploy/billybot.logrotate`) stops the log from filling the disk. logrotate runs once a day; when `billybot.log` is over 10 MB, it is compressed into `billybot.log.1.gz` and emptied, and older logs move up (`.2.gz`, …). Only the newest 5 are kept, so the logs take around 20 MB at most. A few lines written at the moment of rotation can be lost; that is the cost of rotating a file the bot keeps open.
+
+```bash
+ls -lh ~/BillyBot/billybot.log*                         # current size, rotated logs
+sudo logrotate --debug /etc/logrotate.d/billybot        # what logrotate would do now
+sudo logrotate --force /etc/logrotate.d/billybot        # rotate now, e.g. to try it out
+```
+
+To change the size or how many logs are kept, edit `size` and `rotate` in `/etc/logrotate.d/billybot`. The next daily run picks it up.
 
 ## Updating
 

@@ -60,7 +60,7 @@ src/
   music/            per-server player and queue, link parsing, yt-dlp/ffmpeg, embeds
   lib/              logger, reply texts, safe send, duration formatting
 tests/              Vitest tests, with fakes for Discord, voice and child processes
-deploy/             systemd service template
+deploy/             systemd service and logrotate templates
 docs/               deployment guide
 ```
 

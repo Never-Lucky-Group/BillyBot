@@ -1,0 +1,22 @@
+# logrotate rule for BillyBot's log file. Setup steps are in docs/deployment.md.
+#
+# Before installing, replace:
+#   /path/to/BillyBot   the folder the bot runs from (the same as in billybot.service)
+#   YOUR_USER           the Linux user that runs the bot
+#
+# logrotate runs once a day. When billybot.log is over 10 MB, it is copied to billybot.log.1.gz
+# (compressed) and emptied. The newest 5 old logs are kept and older ones deleted, so the logs
+# take around 20 MB at most.
+
+/path/to/BillyBot/billybot.log {
+    # The folder belongs to the bot's user, not root; logrotate refuses to work there without this.
+    su YOUR_USER YOUR_USER
+    size 10M
+    rotate 5
+    compress
+    missingok
+    notifempty
+    # The bot keeps the file open for writing (systemd's StandardOutput=append:), so the file is
+    # copied and then emptied in place rather than renamed. The bot carries on writing to it.
+    copytruncate
+}

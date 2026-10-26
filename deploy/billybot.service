@@ -17,6 +17,10 @@ WorkingDirectory=/path/to/BillyBot
 # Node directly rather than `npm start`, so the stop signal reaches the bot and it leaves voice
 # cleanly. .env is read from WorkingDirectory.
 ExecStart=/usr/bin/node --env-file-if-exists=.env src/index.js
+# The bot's logs go to billybot.log in its folder; deploy/billybot.logrotate keeps the file from
+# growing forever. Remove these two lines to log to the systemd journal instead.
+StandardOutput=append:/path/to/BillyBot/billybot.log
+StandardError=append:/path/to/BillyBot/billybot.log
 Restart=always
 RestartSec=5
 TimeoutStopSec=10
