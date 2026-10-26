@@ -1,0 +1,27 @@
+# systemd service for BillyBot. Setup steps are in docs/deployment.md.
+#
+# Before installing, replace:
+#   YOUR_USER         the Linux user that runs the bot (not root)
+#   /path/to/BillyBot the folder this repository is cloned into
+#   /usr/bin/node     the output of `which node`, if Node 24 is installed somewhere else
+
+[Unit]
+Description=BillyBot Discord music bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=YOUR_USER
+WorkingDirectory=/path/to/BillyBot
+# Node directly rather than `npm start`, so the stop signal reaches the bot and it leaves voice
+# cleanly. .env is read from WorkingDirectory.
+ExecStart=/usr/bin/node --env-file-if-exists=.env src/index.js
+Restart=always
+RestartSec=5
+TimeoutStopSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
