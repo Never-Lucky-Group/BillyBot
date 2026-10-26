@@ -39,7 +39,7 @@ const defaultVoice = { createAudioPlayer, createAudioResource, entersState, join
 export class GuildPlayer {
   // Upcoming songs, not counting the one playing.
   queue = [];
-  // The entry ({ song, audio, failed }) for the song playing or about to play, or null.
+  // The entry ({ song, audio, resource, failed }) for the song playing or about to play, or null.
   current = null;
 
   #voiceChannel;
@@ -87,6 +87,13 @@ export class GuildPlayer {
 
   get destroyed() {
     return this.#destroyed;
+  }
+
+  // The song playing (or about to play) and how far into it playback is, or null. Paused time,
+  // while the connection recovers, does not count.
+  get nowPlaying() {
+    if (!this.current) return null;
+    return { song: this.current.song, elapsedMs: this.current.resource?.playbackDuration ?? 0 };
   }
 
   // Whether a song queued now would start right away.
@@ -162,6 +169,7 @@ export class GuildPlayer {
         inputType: StreamType.OggOpus,
         metadata: entry,
       });
+      entry.resource = resource;
       this.current = entry;
       this.#player.play(resource);
       logger.info(
@@ -240,7 +248,7 @@ export class GuildPlayer {
   }
 
   #createEntry(song, audio) {
-    const entry = { song, audio, failed: false };
+    const entry = { song, audio, resource: null, failed: false };
     audio.setErrorHandler((error) => this.#streamFailed(entry, error));
     return entry;
   }

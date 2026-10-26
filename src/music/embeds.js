@@ -29,17 +29,38 @@ function songEmbed(song) {
     .setFooter({ text: 'BillyTube' });
 }
 
-// The upcoming songs, not counting the one playing.
-export function queueEmbed(queue) {
-  const lines = queue.slice(0, QUEUE_LIST_LIMIT).map((song, index) => {
-    const duration = song.duration ? ` \`[${formatDuration(song.duration)}]\`` : '';
-    return `**${index + 1}.** ${song.title || 'Untitled'}${duration} – *${song.requestedBy}*`;
-  });
+export const NOTHING_QUEUED = 'Nothing queued.';
+
+// For !queue: the song playing (GuildPlayer's nowPlaying, or null between songs) above the
+// upcoming songs. The total counts only the upcoming songs.
+export function queueEmbed({ nowPlaying, queue }) {
+  const sections = [];
+  if (nowPlaying) sections.push(nowPlayingLine(nowPlaying));
+  if (queue.length > 0) {
+    const lines = queue.slice(0, QUEUE_LIST_LIMIT).map((song, index) => {
+      const duration = song.duration ? ` \`[${formatDuration(song.duration)}]\`` : '';
+      return `**${index + 1}.** ${song.title || 'Untitled'}${duration} – *${song.requestedBy}*`;
+    });
+    sections.push(lines.join('\n'));
+  } else {
+    sections.push(NOTHING_QUEUED);
+  }
 
   return new EmbedBuilder()
     .setColor(0xffa500)
     .setTitle('🎶 Current Queue')
-    .setDescription(lines.join('\n'))
+    .setDescription(sections.join('\n\n'))
     .setFooter({ text: `Total in queue: ${queue.length}` })
     .setTimestamp();
+}
+
+// e.g. "▶️ Now playing: Title `[1:24 / 3:33]` – *user*". A livestream has no length, so it shows
+// only the time played.
+function nowPlayingLine({ song, elapsedMs }) {
+  const total = Number(song.duration);
+  const hasLength = song.duration !== null && song.duration !== undefined && total > 0;
+  const elapsedSeconds = Math.floor(elapsedMs / 1000);
+  const elapsed = formatDuration(hasLength ? Math.min(elapsedSeconds, total) : elapsedSeconds);
+  const progress = hasLength ? `${elapsed} / ${formatDuration(total)}` : elapsed;
+  return `▶️ Now playing: ${song.title || 'Untitled'} \`[${progress}]\` – *${song.requestedBy}*`;
 }

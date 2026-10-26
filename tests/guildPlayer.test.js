@@ -44,6 +44,24 @@ describe('GuildPlayer', () => {
     expect(player.current.song.title).toBe('First');
   });
 
+  it('reports the playing song and how far into it playback is', async () => {
+    const { player, voice } = setUp();
+    expect(player.nowPlaying).toBeNull();
+
+    player.enqueue(fakeSong('First'));
+    player.enqueue(fakeSong('Second'));
+    await flush();
+    expect(player.nowPlaying).toEqual({ song: fakeSong('First'), elapsedMs: 0 });
+
+    voice.player.state.resource.playbackDuration = 84_000;
+    expect(player.nowPlaying.elapsedMs).toBe(84_000);
+
+    voice.player.finish();
+    await flush();
+    expect(player.nowPlaying.song.title).toBe('Second');
+    expect(player.nowPlaying.elapsedMs).toBe(0);
+  });
+
   it('announces Now Playing once audio starts, and only once per song', async () => {
     const { player, voice, textChannel } = setUp();
     player.enqueue(fakeSong('First'));

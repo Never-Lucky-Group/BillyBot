@@ -87,6 +87,62 @@ describe('!queue', () => {
     expect(lines[0]).toBe('**1.** Song 1 `[3:33]` – *billyfan*');
     expect(lines[1]).toBe('**2.** Song 2 – *billyfan*');
   });
+
+  const descriptionOf = (message) => message.channel.send.mock.calls[0][0].embeds[0].data;
+
+  it('shows the playing song and how far into it, above the queue', async () => {
+    const message = messageWith({
+      nowPlaying: { song: fakeSong('Wilderness'), elapsedMs: 84_900 },
+      queue: [fakeSong('Pisces'), fakeSong('One More Time')],
+    });
+    await queue.execute(message, []);
+
+    const embed = descriptionOf(message);
+    expect(embed.description).toBe(
+      '▶️ Now playing: Wilderness `[1:24 / 3:33]` – *billyfan*\n\n' +
+        '**1.** Pisces `[3:33]` – *billyfan*\n' +
+        '**2.** One More Time `[3:33]` – *billyfan*',
+    );
+    expect(embed.footer.text).toBe('Total in queue: 2');
+  });
+
+  it('shows the playing song even when nothing is queued after it', async () => {
+    const message = messageWith({
+      nowPlaying: { song: fakeSong('Wilderness'), elapsedMs: 0 },
+      queue: [],
+    });
+    await queue.execute(message, []);
+
+    const embed = descriptionOf(message);
+    expect(embed.description).toBe(
+      '▶️ Now playing: Wilderness `[0:00 / 3:33]` – *billyfan*\n\nNothing queued.',
+    );
+    expect(embed.footer.text).toBe('Total in queue: 0');
+  });
+
+  it('lists the queue alone between songs', async () => {
+    const message = messageWith({ nowPlaying: null, queue: [fakeSong('Pisces')] });
+    await queue.execute(message, []);
+    expect(descriptionOf(message).description).toBe('**1.** Pisces `[3:33]` – *billyfan*');
+  });
+
+  it('shows only the time played for a livestream', async () => {
+    const message = messageWith({
+      nowPlaying: { song: { ...fakeSong('Lofi Radio'), duration: null }, elapsedMs: 3_725_000 },
+      queue: [],
+    });
+    await queue.execute(message, []);
+    expect(descriptionOf(message).description).toMatch(/^▶️ Now playing: Lofi Radio `\[1:02:05\]`/);
+  });
+
+  it('never shows more time played than the song is long', async () => {
+    const message = messageWith({
+      nowPlaying: { song: fakeSong('Wilderness'), elapsedMs: 999_000 },
+      queue: [],
+    });
+    await queue.execute(message, []);
+    expect(descriptionOf(message).description).toContain('`[3:33 / 3:33]`');
+  });
 });
 
 describe('!leave', () => {
