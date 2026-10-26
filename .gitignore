@@ -1,0 +1,14 @@
+# Dependencies
+node_modules/
+
+# Secrets and local configuration (see *.example.json)
+config.json
+spotify_config.json
+youtube_config.json
+billy_bot_token.txt
+.env
+.env.*
+
+# Runtime output
+songs/
+*.log
