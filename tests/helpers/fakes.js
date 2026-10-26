@@ -101,20 +101,33 @@ export function fakeVoice() {
     player,
     connection,
     createAudioPlayer: vi.fn(() => player),
-    createAudioResource: vi.fn((stream, { metadata }) => ({ stream, metadata })),
+    createAudioResource: vi.fn((stream, { metadata }) => ({
+      stream,
+      metadata,
+      playbackDuration: 0,
+    })),
     joinVoiceChannel: vi.fn(() => connection),
     entersState: vi.fn(() => Promise.resolve()),
   };
 }
 
-// createMedia()'s interface. Each opened stream records its stop() and onError.
+// createMedia()'s interface. Each opened stream is recorded; `audio.onError` is the handler the
+// player set, so a test calls it to simulate yt-dlp or ffmpeg failing.
 export function fakeMedia() {
   const streams = [];
   return {
     streams,
     fetchSongInfo: vi.fn(() => Promise.resolve({ title: 'Song', thumbnail: null, duration: 213 })),
-    openAudioStream: vi.fn((videoUrl, { onError }) => {
-      const audio = { videoUrl, stream: {}, stop: vi.fn(), onError };
+    openAudioStream: vi.fn((videoUrl) => {
+      const audio = {
+        videoUrl,
+        stream: { videoUrl },
+        stop: vi.fn(),
+        onError: null,
+        setErrorHandler: vi.fn((handler) => {
+          audio.onError = handler;
+        }),
+      };
       streams.push(audio);
       return audio;
     }),

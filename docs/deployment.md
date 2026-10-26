@@ -125,8 +125,8 @@ The bot logs JSON lines to the journal. To read them:
 
 ```bash
 journalctl -u billybot -f                         # follow, raw JSON
-journalctl -u billybot -f -o cat | npx pino-pretty # follow, readable
-journalctl -u billybot --since "1 hour ago" -o cat | npx pino-pretty
+journalctl -u billybot -f -o cat | npx --yes pino-pretty # follow, readable
+journalctl -u billybot --since "1 hour ago" -o cat | npx --yes pino-pretty
 ```
 
 Set `LOG_LEVEL=debug` in `.env` to also log voice connection changes and broken pipes between yt-dlp and ffmpeg.

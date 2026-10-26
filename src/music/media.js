@@ -46,10 +46,14 @@ export function createMedia({ ytdlpPath, ffmpegPath, spawnProcess = spawn }) {
       };
     },
 
-    // Starts streaming a video's audio. Returns { stream, stop }: `stream` is Ogg Opus for
-    // createAudioResource, and `stop()` ends both programs (call it when the song is done or
-    // skipped). `onError` is called at most once if either program fails before stop() is called.
-    openAudioStream(videoUrl, { onError = () => {} } = {}) {
+    // Starts streaming a video's audio. Returns { stream, stop, setErrorHandler }:
+    //   stream                 Ogg Opus for createAudioResource. Until it is read, the programs
+    //                          pause once the pipes are full, so it can be opened ahead of time.
+    //   stop()                 ends both programs; call it when the song is done, skipped or not
+    //                          needed after all
+    //   setErrorHandler(fn)    fn(error) is called at most once if either program fails before
+    //                          stop(). An error from before fn was set is passed on asynchronously.
+    openAudioStream(videoUrl) {
       const ytdlp = spawnProcess(
         ytdlpPath,
         [
@@ -93,10 +97,13 @@ export function createMedia({ ytdlpPath, ffmpegPath, spawnProcess = spawn }) {
 
       let stopped = false;
       let failed = false;
+      let handler = null;
+      let pendingError = null;
       const fail = (error) => {
         if (stopped || failed) return;
         failed = true;
-        onError(error);
+        if (handler) handler(error);
+        else pendingError = error;
       };
 
       watchProcess(ytdlp, 'yt-dlp', fail);
@@ -110,6 +117,16 @@ export function createMedia({ ytdlpPath, ffmpegPath, spawnProcess = spawn }) {
 
       return {
         stream: ffmpeg.stdout,
+        setErrorHandler(fn) {
+          handler = fn;
+          if (pendingError) {
+            const error = pendingError;
+            pendingError = null;
+            queueMicrotask(() => {
+              if (!stopped) fn(error);
+            });
+          }
+        },
         stop() {
           stopped = true;
           for (const child of [ytdlp, ffmpeg]) {
@@ -148,6 +165,8 @@ function run(spawnProcess, command, args, timeoutMs) {
     });
     let stdout = '';
     const stderr = collectStderr(child);
+    // Decodes across chunks, so a character split between two chunks (é, ポ, emoji) stays whole.
+    child.stdout.setEncoding('utf8');
     child.stdout.on('data', (chunk) => {
       stdout += chunk;
     });
@@ -180,6 +199,7 @@ function watchProcess(child, name, fail) {
 // Keeps the last part of a program's error output.
 function collectStderr(child) {
   let text = '';
+  child.stderr.setEncoding('utf8');
   child.stderr.on('data', (chunk) => {
     text = (text + chunk).slice(-MAX_STDERR_CHARS);
   });

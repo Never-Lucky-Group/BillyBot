@@ -1,7 +1,7 @@
 import { AudioPlayerStatus, StreamType, VoiceConnectionStatus } from '@discordjs/voice';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DOWNLOAD_FAILED, NO_VOICE_PERMISSION, VOICE_CONNECT_FAILED } from '../src/lib/replies.js';
-import { GuildPlayer } from '../src/music/guildPlayer.js';
+import { GuildPlayer, PRELOAD_LEAD_MS } from '../src/music/guildPlayer.js';
 import {
   fakeMedia,
   fakeSong,
@@ -35,7 +35,7 @@ describe('GuildPlayer', () => {
       expect.objectContaining({ channelId: voiceChannel.id, guildId: voiceChannel.guild.id }),
     );
     expect(voice.connection.subscribe).toHaveBeenCalledWith(voice.player);
-    expect(media.openAudioStream).toHaveBeenCalledWith(fakeSong().videoUrl, expect.any(Object));
+    expect(media.openAudioStream).toHaveBeenCalledWith(fakeSong().videoUrl);
     expect(voice.createAudioResource).toHaveBeenCalledWith(
       media.streams[0].stream,
       expect.objectContaining({ inputType: StreamType.OggOpus }),
@@ -236,5 +236,142 @@ describe('GuildPlayer', () => {
 
     expect(player.destroyed).toBe(false);
     expect(player.channelId).toBe('200000000000000777');
+  });
+});
+
+describe('GuildPlayer preloading', () => {
+  // fakeSong() is 213 seconds long. setImmediate stays real so flush() still works.
+  const SONG_MS = 213_000;
+
+  beforeEach(() => vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] }));
+  afterEach(() => vi.useRealTimers());
+
+  const lastResourceStream = (voice) => voice.createAudioResource.mock.calls.at(-1)[0];
+  const failures = (textChannel) =>
+    textChannel.send.mock.calls.filter(([text]) => text === DOWNLOAD_FAILED);
+
+  async function playingWithNext() {
+    const setup = setUp();
+    setup.player.enqueue(fakeSong('First'));
+    setup.player.enqueue(fakeSong('Next'));
+    await flush();
+    setup.voice.player.startPlaying();
+    return setup;
+  }
+
+  it('opens the next song shortly before the playing one ends, and plays from it', async () => {
+    const { voice, media } = await playingWithNext();
+
+    vi.advanceTimersByTime(SONG_MS - PRELOAD_LEAD_MS - 1);
+    expect(media.openAudioStream).toHaveBeenCalledOnce();
+    vi.advanceTimersByTime(1);
+    expect(media.openAudioStream).toHaveBeenCalledTimes(2);
+
+    voice.player.finish();
+    await flush();
+    expect(media.openAudioStream).toHaveBeenCalledTimes(2);
+    expect(lastResourceStream(voice)).toBe(media.streams[1].stream);
+  });
+
+  it('preloads a song queued near the end of the playing one straight away', async () => {
+    const { player, voice, media } = setUp();
+    player.enqueue(fakeSong('First'));
+    await flush();
+    voice.player.startPlaying();
+    vi.advanceTimersByTime(SONG_MS - 10_000);
+    expect(media.openAudioStream).toHaveBeenCalledOnce();
+
+    player.enqueue(fakeSong('Late'));
+    expect(media.openAudioStream).toHaveBeenCalledTimes(2);
+
+    voice.player.finish();
+    await flush();
+    expect(lastResourceStream(voice)).toBe(media.streams[1].stream);
+  });
+
+  it('opens the next song when a song is skipped before preloading', async () => {
+    const { player, voice, media } = await playingWithNext();
+    player.skip();
+    await flush();
+    expect(media.openAudioStream).toHaveBeenCalledTimes(2);
+    expect(lastResourceStream(voice)).toBe(media.streams[1].stream);
+  });
+
+  it('does not preload after a song with no length (a livestream)', async () => {
+    const { player, voice, media } = setUp();
+    player.enqueue({ ...fakeSong('Live'), duration: null });
+    player.enqueue(fakeSong('Next'));
+    await flush();
+    voice.player.startPlaying();
+    vi.advanceTimersByTime(24 * 60 * 60 * 1000);
+    expect(media.openAudioStream).toHaveBeenCalledOnce();
+  });
+
+  it('drops a failed preload quietly and opens the song again when its turn comes', async () => {
+    const { voice, media, textChannel } = await playingWithNext();
+    vi.advanceTimersByTime(SONG_MS);
+    media.streams[1].onError(new Error('yt-dlp exited with 1'));
+    expect(media.streams[1].stop).toHaveBeenCalled();
+
+    voice.player.finish();
+    await flush();
+    expect(media.openAudioStream).toHaveBeenCalledTimes(3);
+    expect(lastResourceStream(voice)).toBe(media.streams[2].stream);
+    expect(failures(textChannel)).toHaveLength(0);
+  });
+
+  it('stops the preloaded stream and the timer when destroyed', async () => {
+    const { player, media } = await playingWithNext();
+    vi.advanceTimersByTime(SONG_MS);
+    player.destroy();
+    expect(media.streams[1].stop).toHaveBeenCalled();
+
+    const other = await playingWithNext();
+    other.player.destroy();
+    vi.advanceTimersByTime(SONG_MS);
+    expect(other.media.openAudioStream).toHaveBeenCalledOnce();
+  });
+
+  it('plays the first song from a stream the caller opened early', async () => {
+    const { player, voice, media } = setUp();
+    const audio = media.openAudioStream(fakeSong().videoUrl);
+
+    expect(player.enqueue(fakeSong('First'), { audio })).toBe(true);
+    await flush();
+
+    expect(media.openAudioStream).toHaveBeenCalledOnce();
+    expect(lastResourceStream(voice)).toBe(audio.stream);
+    expect(audio.stop).not.toHaveBeenCalled();
+  });
+
+  it('stops an early stream it cannot use: the song waits behind others', async () => {
+    const { player, media } = await playingWithNext();
+    const audio = media.openAudioStream(fakeSong().videoUrl);
+    expect(player.enqueue(fakeSong('Third'), { audio })).toBe(false);
+    expect(audio.stop).toHaveBeenCalled();
+  });
+
+  it('stops an early stream it cannot use: the player was destroyed', () => {
+    const { player, media } = setUp();
+    player.destroy();
+    const audio = media.openAudioStream(fakeSong().videoUrl);
+    player.enqueue(fakeSong(), { audio });
+    expect(audio.stop).toHaveBeenCalled();
+  });
+
+  it('opens the first song again if its early stream fails while joining', async () => {
+    const { player, voice, media, textChannel } = setUp();
+    let ready;
+    voice.entersState.mockReturnValueOnce(new Promise((resolve) => (ready = resolve)));
+    const audio = media.openAudioStream(fakeSong().videoUrl);
+    player.enqueue(fakeSong('First'), { audio });
+
+    audio.onError(new Error('yt-dlp exited with 1'));
+    ready();
+    await flush();
+
+    expect(media.openAudioStream).toHaveBeenCalledTimes(2);
+    expect(lastResourceStream(voice)).toBe(media.streams[1].stream);
+    expect(failures(textChannel)).toHaveLength(0);
   });
 });

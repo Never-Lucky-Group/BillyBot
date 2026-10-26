@@ -1,3 +1,4 @@
+import { setTimeout as sleep } from 'node:timers/promises';
 import packageJson from '../package.json' with { type: 'json' };
 import { createClient } from './client.js';
 import { ConfigError, loadEasterEggs, loadEnv } from './config.js';
@@ -39,13 +40,19 @@ async function main() {
   await client.login(env.token);
 }
 
+// How long the "leave voice" messages get to reach Discord before the bot disconnects. They are
+// sent asynchronously, and disconnecting straight away can drop them.
+const LEAVE_VOICE_WAIT_MS = 1_000;
+
 // systemd stops the service with SIGTERM. Leaving voice first means the bot does not linger in a
 // channel until Discord notices it is gone.
 function registerShutdownHandlers(client) {
   const shutdown = (signal) => {
     logger.info({ signal }, 'Shutting down');
-    client.players.destroyAll();
-    void client.destroy().finally(() => process.exit(0));
+    const left = client.players.destroyAll();
+    void (left > 0 ? sleep(LEAVE_VOICE_WAIT_MS) : Promise.resolve())
+      .then(() => client.destroy())
+      .finally(() => process.exit(0));
   };
   process.once('SIGINT', shutdown);
   process.once('SIGTERM', shutdown);

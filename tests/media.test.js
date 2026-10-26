@@ -56,6 +56,36 @@ describe('fetchSongInfo', () => {
     expect(options.timeout).toBeGreaterThan(0);
   });
 
+  it('keeps characters whole when they are split between two chunks of output', async () => {
+    const { media, children } = setUp();
+    const pending = media.fetchSongInfo(VIDEO_URL);
+    const bytes = Buffer.from('{"title": "Pokémon ポケモン 🎵", "duration": 90}\n');
+    // Cut through the middle of é, ポ and 🎵.
+    const cuts = [bytes.indexOf('é') + 1, bytes.indexOf('ポ') + 1, bytes.indexOf('🎵') + 2];
+    let start = 0;
+    for (const cut of cuts) {
+      children[0].child.stdout.write(bytes.subarray(start, cut));
+      start = cut;
+    }
+    children[0].child.stdout.write(bytes.subarray(start));
+    await flush();
+    children[0].child.exit(0);
+
+    expect((await pending).title).toBe('Pokémon ポケモン 🎵');
+  });
+
+  it('keeps characters whole in error output too', async () => {
+    const { media, children } = setUp();
+    const pending = media.fetchSongInfo(VIDEO_URL);
+    const bytes = Buffer.from('ERROR: Vidéo indisponible');
+    const cut = bytes.indexOf('é') + 1;
+    children[0].child.stderr.write(bytes.subarray(0, cut));
+    children[0].child.stderr.write(bytes.subarray(cut));
+    await flush();
+    children[0].child.exit(1);
+    await expect(pending).rejects.toThrow('ERROR: Vidéo indisponible');
+  });
+
   it('fills in missing details', async () => {
     const { media, children } = setUp();
     const pending = media.fetchSongInfo(VIDEO_URL);
@@ -114,7 +144,7 @@ describe('openAudioStream', () => {
   it('reports a failing program once, with its error output', async () => {
     const { media, children } = setUp();
     const onError = vi.fn();
-    media.openAudioStream(VIDEO_URL, { onError });
+    media.openAudioStream(VIDEO_URL).setErrorHandler(onError);
     const [ytdlp, ffmpeg] = children;
 
     ytdlp.child.stderr.write('ERROR: Sign in to confirm your age');
@@ -129,7 +159,7 @@ describe('openAudioStream', () => {
   it('does not report a song that finishes normally', () => {
     const { media, children } = setUp();
     const onError = vi.fn();
-    media.openAudioStream(VIDEO_URL, { onError });
+    media.openAudioStream(VIDEO_URL).setErrorHandler(onError);
     children[0].child.exit(0);
     children[1].child.exit(0);
     expect(onError).not.toHaveBeenCalled();
@@ -138,13 +168,38 @@ describe('openAudioStream', () => {
   it('stop() kills programs still running without reporting an error', () => {
     const { media, children } = setUp();
     const onError = vi.fn();
-    const audio = media.openAudioStream(VIDEO_URL, { onError });
+    const audio = media.openAudioStream(VIDEO_URL);
+    audio.setErrorHandler(onError);
     children[0].child.exit(0);
 
     audio.stop();
 
     expect(children[0].child.kill).not.toHaveBeenCalled();
     expect(children[1].child.kill).toHaveBeenCalledWith('SIGKILL');
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it('passes on an error from before the handler was set', async () => {
+    const { media, children } = setUp();
+    const audio = media.openAudioStream(VIDEO_URL);
+    children[0].child.exit(1);
+
+    const onError = vi.fn();
+    audio.setErrorHandler(onError);
+    expect(onError).not.toHaveBeenCalled();
+    await flush();
+    expect(onError).toHaveBeenCalledOnce();
+  });
+
+  it('drops an early error if the stream is stopped before it is passed on', async () => {
+    const { media, children } = setUp();
+    const audio = media.openAudioStream(VIDEO_URL);
+    children[0].child.exit(1);
+
+    const onError = vi.fn();
+    audio.setErrorHandler(onError);
+    audio.stop();
+    await flush();
     expect(onError).not.toHaveBeenCalled();
   });
 

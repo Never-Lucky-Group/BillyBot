@@ -39,6 +39,15 @@ describe('PlayerRegistry', () => {
     expect(registry.getOrCreate(channels)).not.toBe(player);
   });
 
+  it('gives the early stream to one !play per server at a time', () => {
+    const { registry } = setUp();
+    expect(registry.claimEarlyStream(GUILD_ID)).toBe(true);
+    expect(registry.claimEarlyStream(GUILD_ID)).toBe(false);
+    expect(registry.claimEarlyStream('100000000000000002')).toBe(true);
+    registry.releaseEarlyStream(GUILD_ID);
+    expect(registry.claimEarlyStream(GUILD_ID)).toBe(true);
+  });
+
   it('destroys every player', () => {
     const { registry, channels } = setUp();
     registry.getOrCreate(channels);
@@ -47,7 +56,8 @@ describe('PlayerRegistry', () => {
       voiceChannel: { ...channels.voiceChannel, guild: { id: '100000000000000002' } },
     });
 
-    registry.destroyAll();
+    expect(registry.destroyAll()).toBe(2);
+    expect(registry.destroyAll()).toBe(0);
 
     expect(registry.get(GUILD_ID)).toBeUndefined();
     expect(registry.get('100000000000000002')).toBeUndefined();

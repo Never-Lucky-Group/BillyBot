@@ -18,6 +18,9 @@ const CONNECT_TIMEOUT_MS = 20_000;
 // After an unexpected disconnect, how long to wait for the connection to start recovering (e.g.
 // the bot was moved to another channel) before treating it as kicked and leaving.
 const RECONNECT_TIMEOUT_MS = 5_000;
+// How long before the playing song ends to open the next song's stream. yt-dlp takes several
+// seconds to start, so opening it early lets the next song follow without a gap.
+export const PRELOAD_LEAD_MS = 20_000;
 
 const VOICE_PERMISSIONS = PermissionFlagsBits.Connect | PermissionFlagsBits.Speak;
 
@@ -29,10 +32,14 @@ const defaultVoice = { createAudioPlayer, createAudioResource, entersState, join
 //
 // Songs play one at a time, in order. Starting a song is serialised, so songs queued while the
 // bot is still joining wait their turn instead of interrupting each other.
+//
+// The next song's stream is opened ("preloaded") PRELOAD_LEAD_MS before the playing song ends, or
+// by !play while it looks up a song that will start right away. A preloaded stream that fails is
+// dropped quietly and opened again when its song's turn comes.
 export class GuildPlayer {
   // Upcoming songs, not counting the one playing.
   queue = [];
-  // { song, audio } for the song playing or about to play, or null.
+  // The entry ({ song, audio, failed }) for the song playing or about to play, or null.
   current = null;
 
   #voiceChannel;
@@ -45,6 +52,12 @@ export class GuildPlayer {
   #starting = false;
   #destroyed = false;
   #announced = null;
+  // The entry for queue[0] whose stream is already open, or null.
+  #preloaded = null;
+  #preloadTimer = null;
+  // Whether the playing song is within PRELOAD_LEAD_MS of its end, so a song queued now is
+  // preloaded straight away.
+  #preloadDue = false;
 
   // voiceChannel and textChannel are where the first song was requested; later songs play in the
   // same channels.
@@ -57,7 +70,7 @@ export class GuildPlayer {
 
     this.#player = voice.createAudioPlayer();
     this.#player.on(AudioPlayerStatus.Playing, (_oldState, newState) =>
-      this.#announce(newState.resource.metadata),
+      this.#started(newState.resource),
     );
     this.#player.on(AudioPlayerStatus.Idle, (oldState) => this.#finish(oldState.resource));
     this.#player.on('error', (error) => this.#fail(error.resource?.metadata, error));
@@ -76,13 +89,30 @@ export class GuildPlayer {
     return this.#destroyed;
   }
 
+  // Whether a song queued now would start right away.
+  get idle() {
+    return !this.#destroyed && !this.current && !this.#starting && this.queue.length === 0;
+  }
+
   // Adds a song to the end of the queue. Returns true if it starts right away, false if it waits
-  // behind other songs. A destroyed player drops the song (and returns true, since there is
-  // nothing it waits behind); the reason it was destroyed has already been sent.
-  enqueue(song) {
-    if (this.#destroyed) return true;
-    const startsNow = !this.current && !this.#starting && this.queue.length === 0;
+  // behind other songs. `audio` is the song's stream if the caller already opened one (see
+  // commands/play.js); it is used if the song starts right away and stopped otherwise.
+  //
+  // A destroyed player drops the song (and returns true, since there is nothing it waits behind);
+  // the reason it was destroyed has already been sent.
+  enqueue(song, { audio = null } = {}) {
+    const startsNow = this.idle;
+    if (this.#destroyed) {
+      audio?.stop();
+      return true;
+    }
     this.queue.push(song);
+    if (audio && startsNow) {
+      this.#preloaded = this.#createEntry(song, audio);
+    } else {
+      audio?.stop();
+      this.#preload();
+    }
     void this.#playNext();
     return startsNow;
   }
@@ -99,6 +129,7 @@ export class GuildPlayer {
     if (this.#destroyed) return;
     this.#destroyed = true;
     this.queue.length = 0;
+    this.#cancelPreload();
     const entry = this.current;
     this.current = null;
     this.#player.stop(true);
@@ -119,21 +150,28 @@ export class GuildPlayer {
       const song = this.queue.shift();
       if (!song) return;
 
-      entry = { song, audio: null, failed: false };
-      entry.audio = this.#media.openAudioStream(song.videoUrl, {
-        onError: (error) => this.#fail(entry, error),
-      });
+      const preloaded = this.#preloaded;
+      this.#preloaded = null;
+      if (preloaded?.song === song) {
+        entry = preloaded;
+      } else {
+        preloaded?.audio.stop();
+        entry = this.#createEntry(song, this.#media.openAudioStream(song.videoUrl));
+      }
       const resource = this.#voice.createAudioResource(entry.audio.stream, {
         inputType: StreamType.OggOpus,
         metadata: entry,
       });
       this.current = entry;
       this.#player.play(resource);
-      logger.info({ guildId: this.guildId, title: song.title }, 'Starting song');
+      logger.info(
+        { guildId: this.guildId, title: song.title, preloaded: entry === preloaded },
+        'Starting song',
+      );
     } catch (error) {
       logger.error({ err: error, guildId: this.guildId }, 'Could not start a song');
       void send(this.#textChannel, DOWNLOAD_FAILED);
-      entry?.audio?.stop();
+      entry?.audio.stop();
       this.current = null;
     } finally {
       this.#starting = false;
@@ -201,10 +239,57 @@ export class GuildPlayer {
     }
   }
 
-  #announce(entry) {
+  #createEntry(song, audio) {
+    const entry = { song, audio, failed: false };
+    audio.setErrorHandler((error) => this.#streamFailed(entry, error));
+    return entry;
+  }
+
+  // The first time a song's audio starts: announces it and schedules preloading the next song.
+  // Later Playing events for the same song (after a pause while the connection recovered) do
+  // nothing.
+  #started(resource) {
+    const entry = resource.metadata;
     if (!entry || entry !== this.current || entry === this.#announced) return;
     this.#announced = entry;
     void send(this.#textChannel, { embeds: [nowPlayingEmbed(entry.song)] });
+
+    this.#clearPreloadTimer();
+    // A livestream has no length, so the next song is opened only when its turn comes.
+    const durationMs = Number(entry.song.duration) * 1000;
+    if (!(durationMs > 0)) return;
+    const delay = Math.max(0, durationMs - resource.playbackDuration - PRELOAD_LEAD_MS);
+    this.#preloadTimer = setTimeout(() => {
+      this.#preloadDue = true;
+      this.#preload();
+    }, delay);
+  }
+
+  // Opens queue[0]'s stream if the playing song is near its end and it is not open yet.
+  #preload() {
+    if (!this.#preloadDue || this.#preloaded || this.#destroyed) return;
+    const song = this.queue[0];
+    if (!song) return;
+    try {
+      this.#preloaded = this.#createEntry(song, this.#media.openAudioStream(song.videoUrl));
+      logger.debug({ guildId: this.guildId, title: song.title }, 'Preloading the next song');
+    } catch (error) {
+      // Tried again when the song's turn comes.
+      logger.warn({ err: error, guildId: this.guildId }, 'Could not preload the next song');
+    }
+  }
+
+  #clearPreloadTimer() {
+    clearTimeout(this.#preloadTimer);
+    this.#preloadTimer = null;
+    this.#preloadDue = false;
+  }
+
+  // Also stops any preloaded stream.
+  #cancelPreload() {
+    this.#clearPreloadTimer();
+    this.#preloaded?.audio.stop();
+    this.#preloaded = null;
   }
 
   #finish(resource) {
@@ -212,7 +297,22 @@ export class GuildPlayer {
     if (!entry || entry !== this.current) return;
     this.current = null;
     entry.audio.stop();
+    // Keeps the preloaded stream for the song about to start.
+    this.#clearPreloadTimer();
     void this.#playNext();
+  }
+
+  #streamFailed(entry, error) {
+    if (entry === this.#preloaded) {
+      logger.warn(
+        { err: error, guildId: this.guildId, title: entry.song.title },
+        'Preloaded stream failed; it is opened again when the song starts',
+      );
+      entry.audio.stop();
+      this.#preloaded = null;
+      return;
+    }
+    this.#fail(entry, error);
   }
 
   // Reports a song that failed to stream, once. The player then goes idle and the next song starts.

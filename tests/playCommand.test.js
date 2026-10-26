@@ -18,7 +18,7 @@ import {
 const LINK = 'https://youtu.be/dQw4w9WgXcQ';
 
 // A registry whose players are stubs, so these tests cover only the command.
-function setUp({ startsNow = true, member, channel } = {}) {
+function setUp({ startsNow = true, idle = false, member, channel } = {}) {
   const media = fakeMedia();
   const created = [];
   const players = new PlayerRegistry({
@@ -28,6 +28,7 @@ function setUp({ startsNow = true, member, channel } = {}) {
         options,
         enqueue: vi.fn(() => startsNow),
         destroy: () => options.onDestroy(player),
+        idle,
       };
       created.push(player);
       return player;
@@ -48,16 +49,101 @@ describe('!play', () => {
     expect(created).toHaveLength(1);
     expect(created[0].options.voiceChannel).toBe(message.member.voice.channel);
     expect(created[0].options.textChannel).toBe(message.channel);
-    expect(created[0].enqueue).toHaveBeenCalledWith({
-      title: 'Song',
-      thumbnail: null,
-      duration: 213,
-      url: LINK,
-      videoUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
-      requestedBy: 'billyfan',
-    });
+    expect(created[0].enqueue).toHaveBeenCalledWith(
+      {
+        title: 'Song',
+        thumbnail: null,
+        duration: 213,
+        url: LINK,
+        videoUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+        requestedBy: 'billyfan',
+      },
+      { audio: media.streams[0] },
+    );
     // The player announces Now Playing itself.
     expect(message.channel.send).not.toHaveBeenCalled();
+  });
+
+  it('opens the stream while looking up a song that will start right away', async () => {
+    const { message, media } = setUp();
+    let finishLookup;
+    media.fetchSongInfo.mockReturnValueOnce(new Promise((resolve) => (finishLookup = resolve)));
+
+    const pending = run(message);
+    expect(media.openAudioStream).toHaveBeenCalledWith(
+      'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+    );
+    finishLookup({ title: 'Song', thumbnail: null, duration: 213 });
+    await pending;
+  });
+
+  it('opens the stream early when the bot is in voice with nothing playing', async () => {
+    const { message, media, created } = setUp({ idle: true });
+    await run(message);
+    await run(message);
+    expect(media.openAudioStream).toHaveBeenCalledTimes(2);
+    expect(created[0].enqueue).toHaveBeenLastCalledWith(expect.any(Object), {
+      audio: media.streams[1],
+    });
+  });
+
+  it('does not open the stream early when songs are playing; the player opens it later', async () => {
+    const { message, media, created } = setUp({ idle: false });
+    await run(message);
+    await run(message);
+    expect(media.openAudioStream).toHaveBeenCalledOnce();
+    expect(created[0].enqueue).toHaveBeenLastCalledWith(expect.any(Object), { audio: null });
+  });
+
+  it('opens only one early stream for a burst of !play while nothing is playing', async () => {
+    const { message, media, created } = setUp();
+    const lookups = [];
+    media.fetchSongInfo.mockImplementation(() => new Promise((resolve) => lookups.push(resolve)));
+
+    const pending = [run(message), run(message), run(message)];
+    expect(media.openAudioStream).toHaveBeenCalledOnce();
+
+    for (const resolve of lookups) resolve({ title: 'Song', thumbnail: null, duration: 1 });
+    await Promise.all(pending);
+    const audios = created[0].enqueue.mock.calls.map(([, { audio }]) => audio);
+    expect(audios).toEqual([media.streams[0], null, null]);
+  });
+
+  it('lets the next !play open an early stream once the lookup is over', async () => {
+    const { message, media, players } = setUp();
+    await run(message);
+    expect(players.claimEarlyStream(message.guild.id)).toBe(true);
+    players.releaseEarlyStream(message.guild.id);
+    expect(media.openAudioStream).toHaveBeenCalledOnce();
+  });
+
+  it('lets the next !play open an early stream after a lookup fails', async () => {
+    const { message, media } = setUp();
+    media.fetchSongInfo.mockRejectedValueOnce(new Error('Video unavailable'));
+    await run(message);
+    await run(message);
+    expect(media.openAudioStream).toHaveBeenCalledTimes(2);
+    expect(media.streams[0].stop).toHaveBeenCalled();
+  });
+
+  it('lets the next !play open an early stream after the early open throws', async () => {
+    // The bot stays in voice with nothing playing after the first song is queued.
+    const { message, media } = setUp({ idle: true });
+    media.openAudioStream.mockImplementationOnce(() => {
+      throw new Error('spawn failed');
+    });
+    await run(message);
+    await run(message);
+    expect(media.openAudioStream).toHaveBeenCalledTimes(2);
+  });
+
+  it('still queues the song if the stream cannot be opened early', async () => {
+    const { message, media, created } = setUp();
+    media.openAudioStream.mockImplementationOnce(() => {
+      throw new Error('spawn failed');
+    });
+    await run(message);
+    expect(created[0].enqueue).toHaveBeenCalledWith(expect.any(Object), { audio: null });
   });
 
   it('shows Added to Queue when the song waits behind others', async () => {
@@ -124,10 +210,11 @@ describe('!play', () => {
     await run(message);
     expect(message.channel.send).toHaveBeenCalledWith(DOWNLOAD_FAILED);
     expect(created).toHaveLength(0);
+    expect(media.streams[0].stop).toHaveBeenCalled();
   });
 
   it('drops a song still loading when the bot leaves voice', async () => {
-    const { message, media, players, created } = setUp();
+    const { message, media, players, created } = setUp({ idle: true });
     await run(message);
     let finishLookup;
     media.fetchSongInfo.mockReturnValueOnce(new Promise((resolve) => (finishLookup = resolve)));
@@ -139,6 +226,8 @@ describe('!play', () => {
 
     expect(created).toHaveLength(1);
     expect(players.get(message.guild.id)).toBeUndefined();
+    // Nothing was playing when the late song was requested, so its stream was opened early.
+    expect(media.streams.at(-1).stop).toHaveBeenCalled();
   });
 
   it('uses the voice channel at request time if the requester left voice during the lookup', async () => {
