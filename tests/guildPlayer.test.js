@@ -4,6 +4,7 @@ import { DOWNLOAD_FAILED, NO_VOICE_PERMISSION, VOICE_CONNECT_FAILED } from '../s
 import { GuildPlayer, PRELOAD_LEAD_MS } from '../src/music/guildPlayer.js';
 import {
   fakeMedia,
+  fakeSentMessage,
   fakeSong,
   fakeTextChannel,
   fakeVoice,
@@ -391,5 +392,120 @@ describe('GuildPlayer preloading', () => {
     expect(media.openAudioStream).toHaveBeenCalledTimes(2);
     expect(lastResourceStream(voice)).toBe(media.streams[1].stream);
     expect(failures(textChannel)).toHaveLength(0);
+  });
+});
+
+describe('GuildPlayer status card', () => {
+  // A first song that came with its "Searching…" card from !play.
+  async function startWithCard(setupOptions, beforeEnqueue = () => {}) {
+    const setup = setUp(setupOptions);
+    beforeEnqueue(setup);
+    const card = fakeSentMessage();
+    setup.player.enqueue(fakeSong('First'), { statusMessage: card });
+    await flush();
+    return { ...setup, card };
+  }
+
+  const editedText = (card) => card.edit.mock.calls.map(([options]) => options.content);
+
+  it('turns the card into Now Playing when the audio starts, instead of a new message', async () => {
+    const { voice, card, textChannel } = await startWithCard();
+    expect(card.edit).not.toHaveBeenCalled();
+
+    voice.player.startPlaying();
+    await flush();
+
+    expect(card.edit).toHaveBeenCalledOnce();
+    expect(card.edit.mock.calls[0][0].embeds[0].data).toMatchObject({
+      title: '🎶 Now Playing',
+      description: 'First',
+    });
+    expect(textChannel.send).not.toHaveBeenCalled();
+  });
+
+  it('gives later songs a new Now Playing message, as before', async () => {
+    const { player, voice, card, textChannel } = await startWithCard();
+    player.enqueue(fakeSong('Second'));
+    voice.player.startPlaying();
+    voice.player.finish();
+    await flush();
+    voice.player.startPlaying();
+    await flush();
+
+    expect(card.edit).toHaveBeenCalledOnce();
+    expect(embedTitles(textChannel)).toEqual(['🎶 Now Playing']);
+  });
+
+  it('turns the card into the error when the bot may not join or speak', async () => {
+    const { card, textChannel } = await startWithCard({ canSpeak: false });
+    expect(editedText(card)).toEqual([NO_VOICE_PERMISSION]);
+    expect(card.delete).not.toHaveBeenCalled();
+    expect(textChannel.send).not.toHaveBeenCalled();
+  });
+
+  it('turns the card into the error when joining voice times out', async () => {
+    const { card } = await startWithCard(undefined, ({ voice }) =>
+      voice.entersState.mockRejectedValueOnce(new Error('timed out')),
+    );
+    expect(editedText(card)).toEqual([VOICE_CONNECT_FAILED]);
+  });
+
+  it('turns the card into the error when the stream fails before any audio', async () => {
+    const { voice, media, card } = await startWithCard();
+    media.streams[0].onError(new Error('yt-dlp exited with 1'));
+    voice.player.finish();
+    await flush();
+    expect(editedText(card)).toEqual([DOWNLOAD_FAILED]);
+  });
+
+  it('turns the card into the error when the stream ends without audio or an error', async () => {
+    const { voice, card } = await startWithCard();
+    voice.player.finish();
+    await flush();
+    expect(editedText(card)).toEqual([DOWNLOAD_FAILED]);
+  });
+
+  it('deletes the card when the song is skipped before its audio starts', async () => {
+    const { player, card, textChannel } = await startWithCard();
+    player.skip();
+    await flush();
+    expect(card.delete).toHaveBeenCalled();
+    expect(card.edit).not.toHaveBeenCalled();
+    expect(textChannel.send).not.toHaveBeenCalled();
+  });
+
+  it('deletes the card when the bot leaves before the song starts', async () => {
+    const { player, card } = await startWithCard();
+    player.destroy();
+    await flush();
+    expect(card.delete).toHaveBeenCalled();
+    expect(card.edit).not.toHaveBeenCalled();
+  });
+
+  it('leaves the card of a song that waits behind others to the caller', async () => {
+    const { player } = await startWithCard();
+    const waitingCard = fakeSentMessage();
+    expect(player.enqueue(fakeSong('Second'), { statusMessage: waitingCard })).toBe(false);
+    player.destroy();
+    await flush();
+    expect(waitingCard.edit).not.toHaveBeenCalled();
+    expect(waitingCard.delete).not.toHaveBeenCalled();
+  });
+
+  it('deletes the card of a song queued on a destroyed player', async () => {
+    const { player } = setUp();
+    player.destroy();
+    const card = fakeSentMessage();
+    player.enqueue(fakeSong(), { statusMessage: card });
+    await flush();
+    expect(card.delete).toHaveBeenCalled();
+  });
+
+  it('sends Now Playing as a new message if the card was deleted meanwhile', async () => {
+    const { voice, card, textChannel } = await startWithCard();
+    card.edit.mockRejectedValueOnce(new Error('Unknown Message'));
+    voice.player.startPlaying();
+    await flush();
+    expect(embedTitles(textChannel)).toEqual(['🎶 Now Playing']);
   });
 });

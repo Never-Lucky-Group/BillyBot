@@ -10,7 +10,7 @@ import {
 import { PermissionFlagsBits } from 'discord.js';
 import { logger } from '../lib/logger.js';
 import { DOWNLOAD_FAILED, NO_VOICE_PERMISSION, VOICE_CONNECT_FAILED } from '../lib/replies.js';
-import { send } from '../lib/send.js';
+import { editOrSend, remove } from '../lib/send.js';
 import { nowPlayingEmbed } from './embeds.js';
 
 // How long joining a voice channel may take before it counts as failed.
@@ -36,10 +36,15 @@ const defaultVoice = { createAudioPlayer, createAudioResource, entersState, join
 // The next song's stream is opened ("preloaded") PRELOAD_LEAD_MS before the playing song ends, or
 // by !play while it looks up a song that will start right away. A preloaded stream that fails is
 // dropped quietly and opened again when its song's turn comes.
+//
+// A song that starts right away comes with !play's "Searching…" card, which the player turns into
+// the song's result: Now Playing, or the error if it cannot play. The card is deleted if the song
+// is skipped before its audio starts or the bot leaves voice first.
 export class GuildPlayer {
   // Upcoming songs, not counting the one playing.
   queue = [];
-  // The entry ({ song, audio, resource, failed }) for the song playing or about to play, or null.
+  // The entry ({ song, audio, resource, failed, skipped }) for the song playing or about to play,
+  // or null.
   current = null;
 
   #voiceChannel;
@@ -58,6 +63,8 @@ export class GuildPlayer {
   // Whether the playing song is within PRELOAD_LEAD_MS of its end, so a song queued now is
   // preloaded straight away.
   #preloadDue = false;
+  // Song → its "Searching…" card, until the card is turned into the result.
+  #statusMessages = new Map();
 
   // voiceChannel and textChannel are where the first song was requested; later songs play in the
   // same channels.
@@ -102,18 +109,23 @@ export class GuildPlayer {
   }
 
   // Adds a song to the end of the queue. Returns true if it starts right away, false if it waits
-  // behind other songs. `audio` is the song's stream if the caller already opened one (see
-  // commands/play.js); it is used if the song starts right away and stopped otherwise.
+  // behind other songs. Both options come from commands/play.js:
+  //   audio          the song's stream if already opened; used if the song starts right away and
+  //                  stopped otherwise
+  //   statusMessage  its "Searching…" card; kept if the song starts right away. Otherwise the
+  //                  caller edits it (into Added to Queue).
   //
-  // A destroyed player drops the song (and returns true, since there is nothing it waits behind);
-  // the reason it was destroyed has already been sent.
-  enqueue(song, { audio = null } = {}) {
+  // A destroyed player drops the song and deletes its card (and returns true, since there is
+  // nothing it waits behind); the reason it was destroyed has already been sent.
+  enqueue(song, { audio = null, statusMessage = null } = {}) {
     const startsNow = this.idle;
     if (this.#destroyed) {
       audio?.stop();
+      if (statusMessage) void remove(statusMessage);
       return true;
     }
     this.queue.push(song);
+    if (startsNow && statusMessage) this.#statusMessages.set(song, statusMessage);
     if (audio && startsNow) {
       this.#preloaded = this.#createEntry(song, audio);
     } else {
@@ -127,6 +139,7 @@ export class GuildPlayer {
   // Ends the song playing; the next one in the queue starts. Returns false if nothing is playing.
   skip() {
     if (!this.current) return false;
+    this.current.skipped = true;
     this.#player.stop(true);
     return true;
   }
@@ -137,6 +150,8 @@ export class GuildPlayer {
     this.#destroyed = true;
     this.queue.length = 0;
     this.#cancelPreload();
+    for (const message of this.#statusMessages.values()) void remove(message);
+    this.#statusMessages.clear();
     const entry = this.current;
     this.current = null;
     this.#player.stop(true);
@@ -152,9 +167,10 @@ export class GuildPlayer {
     if (this.#starting || this.current || this.#destroyed || this.queue.length === 0) return;
     this.#starting = true;
     let entry = null;
+    let song = null;
     try {
       if (!(await this.#connect())) return;
-      const song = this.queue.shift();
+      song = this.queue.shift();
       if (!song) return;
 
       const preloaded = this.#preloaded;
@@ -178,7 +194,7 @@ export class GuildPlayer {
       );
     } catch (error) {
       logger.error({ err: error, guildId: this.guildId }, 'Could not start a song');
-      void send(this.#textChannel, DOWNLOAD_FAILED);
+      this.#respond(song, DOWNLOAD_FAILED);
       entry?.audio.stop();
       this.current = null;
     } finally {
@@ -196,7 +212,7 @@ export class GuildPlayer {
     const me = this.#voiceChannel.guild.members.me;
     if (!this.#voiceChannel.permissionsFor(me)?.has(VOICE_PERMISSIONS)) {
       logger.warn({ guildId: this.guildId }, 'Missing permission to join or speak in voice');
-      void send(this.#textChannel, NO_VOICE_PERMISSION);
+      this.#respond(this.queue[0], NO_VOICE_PERMISSION);
       this.destroy();
       return false;
     }
@@ -226,7 +242,7 @@ export class GuildPlayer {
     } catch (error) {
       if (this.#destroyed) return false;
       logger.warn({ err: error, guildId: this.guildId }, 'Could not join the voice channel');
-      void send(this.#textChannel, VOICE_CONNECT_FAILED);
+      this.#respond(this.queue[0], VOICE_CONNECT_FAILED);
       this.destroy();
       return false;
     }
@@ -248,7 +264,7 @@ export class GuildPlayer {
   }
 
   #createEntry(song, audio) {
-    const entry = { song, audio, resource: null, failed: false };
+    const entry = { song, audio, resource: null, failed: false, skipped: false };
     audio.setErrorHandler((error) => this.#streamFailed(entry, error));
     return entry;
   }
@@ -260,7 +276,7 @@ export class GuildPlayer {
     const entry = resource.metadata;
     if (!entry || entry !== this.current || entry === this.#announced) return;
     this.#announced = entry;
-    void send(this.#textChannel, { embeds: [nowPlayingEmbed(entry.song)] });
+    this.#respond(entry.song, { embeds: [nowPlayingEmbed(entry.song)] });
 
     this.#clearPreloadTimer();
     // A livestream has no length, so the next song is opened only when its turn comes.
@@ -305,6 +321,12 @@ export class GuildPlayer {
     if (!entry || entry !== this.current) return;
     this.current = null;
     entry.audio.stop();
+    // A song still showing "Searching…" ended before its audio started: skipped, or its stream
+    // gave no audio without reporting an error.
+    if (this.#statusMessages.has(entry.song)) {
+      if (entry.skipped) this.#dropStatus(entry.song);
+      else this.#fail(entry, new Error('The stream ended before any audio played'));
+    }
     // Keeps the preloaded stream for the song about to start.
     this.#clearPreloadTimer();
     void this.#playNext();
@@ -331,6 +353,20 @@ export class GuildPlayer {
       { err: error, guildId: this.guildId, title: entry.song.title },
       'Song failed to play',
     );
-    void send(this.#textChannel, DOWNLOAD_FAILED);
+    this.#respond(entry.song, DOWNLOAD_FAILED);
+  }
+
+  // Tells the text channel about `song`: edits its "Searching…" card into `options` (a text reply
+  // or { embeds }) if it still has one, or sends a new message.
+  #respond(song, options) {
+    const status = song ? this.#statusMessages.get(song) : undefined;
+    if (status) this.#statusMessages.delete(song);
+    void editOrSend(status, this.#textChannel, options);
+  }
+
+  #dropStatus(song) {
+    const status = this.#statusMessages.get(song);
+    this.#statusMessages.delete(song);
+    if (status) void remove(status);
   }
 }

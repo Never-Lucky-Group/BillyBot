@@ -7,8 +7,8 @@ import {
   notDj,
   wrongChannel,
 } from '../lib/replies.js';
-import { send } from '../lib/send.js';
-import { addedToQueueEmbed } from '../music/embeds.js';
+import { editOrSend, remove, send } from '../lib/send.js';
+import { addedToQueueEmbed, searchingEmbed } from '../music/embeds.js';
 import { parsePlayLink } from '../music/links.js';
 
 // !play only works in a channel with this name, for members with a role of this name.
@@ -65,13 +65,23 @@ export default {
     const claimed = (!existing || existing.idle) && players.claimEarlyStream(guildId);
     const audio = claimed ? openEarly(media, link.videoUrl, guildId) : null;
 
+    // A "Searching…" card so the requester sees the bot working; it is edited into the result
+    // later. Sent alongside the lookup, so neither waits for the other. Null if it could not be
+    // sent, and then the result is sent as a new message instead.
+    const statusSent = send(message.channel, {
+      embeds: [searchingEmbed(link.url, message.author.username)],
+    });
+
     let info;
+    let status;
     try {
       info = await media.fetchSongInfo(link.videoUrl);
+      // Sending takes well under the lookup's seconds, so this rarely waits.
+      status = await statusSent;
     } catch (error) {
       audio?.stop();
       logger.warn({ err: error, guildId, url: link.videoUrl }, 'Could not look up a song');
-      await send(message.channel, DOWNLOAD_FAILED);
+      await editOrSend(await statusSent, message.channel, DOWNLOAD_FAILED);
       return;
     } finally {
       // From here to enqueue() nothing waits, so no other !play can slip in between.
@@ -80,6 +90,7 @@ export default {
 
     if (players.leaveCount(guildId) !== leaveCount) {
       audio?.stop();
+      if (status) void remove(status);
       logger.info({ guildId, title: info.title }, 'Dropping a song requested before leaving voice');
       return;
     }
@@ -96,8 +107,9 @@ export default {
       textChannel: message.channel,
     });
     logger.info({ guildId, title: song.title }, 'Queued song');
-    if (!player.enqueue(song, { audio })) {
-      await send(message.channel, { embeds: [addedToQueueEmbed(song)] });
+    // A song that starts right away keeps its card: the player turns it into Now Playing.
+    if (!player.enqueue(song, { audio, statusMessage: status })) {
+      await editOrSend(status, message.channel, { embeds: [addedToQueueEmbed(song)] });
     }
   },
 };

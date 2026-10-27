@@ -6,14 +6,14 @@ A Discord music bot ("BillyTube") that plays YouTube links in a voice channel. B
 
 Commands start with the prefix (`!` by default) and must be typed exactly, e.g. `!play`, not `!Play` or `!playlist`.
 
-| Command                | What it does                                                                                                                                                      |
-| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `!play <YouTube link>` | Joins your voice channel and plays the song, or adds it to the queue. Only in the `music_bot` channel, for members with the `DJ` role who are in a voice channel. |
-| `!skip`                | Skips to the next song in the queue.                                                                                                                              |
-| `!queue`               | Shows the song playing and how far into it, then the next 10 songs and how many are queued.                                                                       |
-| `!leave`               | Leaves the voice channel and clears the queue.                                                                                                                    |
-| `!help`                | DMs you the list of commands.                                                                                                                                     |
-| `!patchnotes`          | Posts the latest patch notes.                                                                                                                                     |
+| Command                | What it does                                                                                                                                                                                                                                                                     |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `!play <YouTube link>` | Shows a "🔎 Searching…" card right away, then joins your voice channel and plays the song (the card becomes Now Playing), or adds it to the queue (the card becomes Added to Queue). Only in the `music_bot` channel, for members with the `DJ` role who are in a voice channel. |
+| `!skip`                | Skips to the next song in the queue.                                                                                                                                                                                                                                             |
+| `!queue`               | Shows the song playing and how far into it, then the next 10 songs and how many are queued.                                                                                                                                                                                      |
+| `!leave`               | Leaves the voice channel and clears the queue.                                                                                                                                                                                                                                   |
+| `!help`                | DMs you the list of commands.                                                                                                                                                                                                                                                    |
+| `!patchnotes`          | Posts the latest patch notes.                                                                                                                                                                                                                                                    |
 
 - The bot leaves by itself when nobody else is left in its voice channel.
 - YouTube video links work in any common form (`youtube.com/watch`, `youtu.be`, Shorts, YouTube Music). Playlist and channel links do not.

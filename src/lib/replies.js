@@ -9,6 +9,7 @@ export function helpText(prefix) {
 export const PATCH_NOTES =
   'BillyBot Patch 3.1:\n\n' +
   '- Songs start playing faster.\n' +
+  '- !play now shows a 🔎 Searching… card right away, which turns into Now Playing or Added to Queue.\n' +
   '- Fixed bugs that could crash BillyBot or leave it stuck in a voice channel.\n' +
   '- !queue now shows the song that is playing and how far into it it is.\n' +
   '- Spotify links are no longer supported.\n';

@@ -13,8 +13,18 @@ export const BOT_USER_ID = '300000000000000099';
 
 export const flush = () => new Promise((resolve) => setImmediate(resolve));
 
+// A message the bot sent. Its edit() and delete() calls are recorded.
+export function fakeSentMessage() {
+  const message = {
+    id: '400000000000000001',
+    edit: vi.fn(() => Promise.resolve(message)),
+    delete: vi.fn(() => Promise.resolve()),
+  };
+  return message;
+}
+
 export function fakeTextChannel({ name = 'music_bot' } = {}) {
-  return { id: TEXT_CHANNEL_ID, name, send: vi.fn(() => Promise.resolve({})) };
+  return { id: TEXT_CHANNEL_ID, name, send: vi.fn(() => Promise.resolve(fakeSentMessage())) };
 }
 
 export function fakeGuild({ voiceStates = [] } = {}) {

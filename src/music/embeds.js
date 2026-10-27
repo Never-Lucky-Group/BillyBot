@@ -12,6 +12,18 @@ export function nowPlayingEmbed(song) {
     .setTitle('🎶 Now Playing');
 }
 
+// Posted as soon as !play gets a YouTube link, then edited into the result: Now Playing, Added to
+// Queue, or an error (see commands/play.js and GuildPlayer).
+export function searchingEmbed(url, requestedBy) {
+  return new EmbedBuilder()
+    .setColor(0x95a5a6)
+    .setTitle('🔎 Searching…')
+    .setDescription(url)
+    .addFields({ name: 'Requested by', value: requestedBy, inline: true })
+    .setTimestamp()
+    .setFooter({ text: 'BillyTube' });
+}
+
 export function addedToQueueEmbed(song) {
   return songEmbed(song).setColor(0x0099ff).setTitle('Added to Queue');
 }

@@ -40,6 +40,9 @@ function setUp({ startsNow = true, idle = false, member, channel } = {}) {
 
 const run = (message, args = [LINK]) => play.execute(message, args);
 
+// The "Searching…" card a run sent: the message returned by its channel.send() call `index`.
+const cardOf = (message, index = 0) => message.channel.send.mock.results[index].value;
+
 describe('!play', () => {
   it('looks up the song and queues it for the requester', async () => {
     const { message, media, created } = setUp();
@@ -58,10 +61,24 @@ describe('!play', () => {
         videoUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
         requestedBy: 'billyfan',
       },
-      { audio: media.streams[0] },
+      { audio: media.streams[0], statusMessage: await cardOf(message) },
     );
-    // The player announces Now Playing itself.
-    expect(message.channel.send).not.toHaveBeenCalled();
+    // Only the card: the player turns it into Now Playing.
+    expect(message.channel.send).toHaveBeenCalledOnce();
+  });
+
+  it('posts a Searching card with the link and requester straight away', async () => {
+    const { message, media } = setUp();
+    media.fetchSongInfo.mockReturnValueOnce(new Promise(() => {}));
+    void run(message);
+
+    const [[options]] = message.channel.send.mock.calls;
+    expect(options.embeds[0].data).toMatchObject({
+      title: '🔎 Searching…',
+      description: LINK,
+      fields: [{ name: 'Requested by', value: 'billyfan', inline: true }],
+      footer: { text: 'BillyTube' },
+    });
   });
 
   it('opens the stream while looking up a song that will start right away', async () => {
@@ -82,9 +99,10 @@ describe('!play', () => {
     await run(message);
     await run(message);
     expect(media.openAudioStream).toHaveBeenCalledTimes(2);
-    expect(created[0].enqueue).toHaveBeenLastCalledWith(expect.any(Object), {
-      audio: media.streams[1],
-    });
+    expect(created[0].enqueue).toHaveBeenLastCalledWith(
+      expect.any(Object),
+      expect.objectContaining({ audio: media.streams[1] }),
+    );
   });
 
   it('does not open the stream early when songs are playing; the player opens it later', async () => {
@@ -92,7 +110,10 @@ describe('!play', () => {
     await run(message);
     await run(message);
     expect(media.openAudioStream).toHaveBeenCalledOnce();
-    expect(created[0].enqueue).toHaveBeenLastCalledWith(expect.any(Object), { audio: null });
+    expect(created[0].enqueue).toHaveBeenLastCalledWith(
+      expect.any(Object),
+      expect.objectContaining({ audio: null }),
+    );
   });
 
   it('opens only one early stream for a burst of !play while nothing is playing', async () => {
@@ -143,20 +164,48 @@ describe('!play', () => {
       throw new Error('spawn failed');
     });
     await run(message);
-    expect(created[0].enqueue).toHaveBeenCalledWith(expect.any(Object), { audio: null });
+    expect(created[0].enqueue).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({ audio: null }),
+    );
   });
 
-  it('shows Added to Queue when the song waits behind others', async () => {
+  it('turns the card into Added to Queue when the song waits behind others', async () => {
     const { message } = setUp({ startsNow: false });
     await run(message);
 
-    const [[options]] = message.channel.send.mock.calls;
+    const card = await cardOf(message);
+    const [[options]] = card.edit.mock.calls;
     expect(options.embeds[0].data).toMatchObject({
       title: 'Added to Queue',
       description: 'Song',
       url: LINK,
       footer: { text: 'BillyTube' },
     });
+    expect(message.channel.send).toHaveBeenCalledOnce();
+  });
+
+  it('sends Added to Queue as a new message if the card could not be sent', async () => {
+    const { message } = setUp({ startsNow: false });
+    message.channel.send.mockRejectedValueOnce(new Error('Missing Permissions'));
+    await run(message);
+
+    expect(message.channel.send).toHaveBeenCalledTimes(2);
+    expect(message.channel.send.mock.calls[1][0].embeds[0].data.title).toBe('Added to Queue');
+  });
+
+  it('sends Added to Queue as a new message if the card was deleted meanwhile', async () => {
+    const { message } = setUp({ startsNow: false });
+    await run(message);
+    // Same run again, with the card's edit failing as it does for a deleted message.
+    message.channel.send.mockImplementationOnce(async () => ({
+      id: 'gone',
+      edit: vi.fn(() => Promise.reject(new Error('Unknown Message'))),
+      delete: vi.fn(),
+    }));
+    await run(message);
+
+    expect(message.channel.send.mock.calls.at(-1)[0].embeds[0].data.title).toBe('Added to Queue');
   });
 
   it('reuses the server player for later songs', async () => {
@@ -194,6 +243,8 @@ describe('!play', () => {
   it('turns Spotify links away', async () => {
     const { message, media } = setUp();
     await run(message, ['https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC']);
+    // A plain reply, with no Searching card.
+    expect(message.channel.send).toHaveBeenCalledOnce();
     expect(message.channel.send).toHaveBeenCalledWith(SPOTIFY_UNSUPPORTED);
     expect(media.fetchSongInfo).not.toHaveBeenCalled();
   });
@@ -208,7 +259,11 @@ describe('!play', () => {
     const { message, media, created } = setUp();
     media.fetchSongInfo.mockRejectedValueOnce(new Error('Video unavailable'));
     await run(message);
-    expect(message.channel.send).toHaveBeenCalledWith(DOWNLOAD_FAILED);
+    expect((await cardOf(message)).edit).toHaveBeenCalledWith({
+      content: DOWNLOAD_FAILED,
+      embeds: [],
+    });
+    expect(message.channel.send).toHaveBeenCalledOnce();
     expect(created).toHaveLength(0);
     expect(media.streams[0].stop).toHaveBeenCalled();
   });
@@ -228,6 +283,8 @@ describe('!play', () => {
     expect(players.get(message.guild.id)).toBeUndefined();
     // Nothing was playing when the late song was requested, so its stream was opened early.
     expect(media.streams.at(-1).stop).toHaveBeenCalled();
+    // Its card is removed, like the silent !leave.
+    expect((await cardOf(message, 1)).delete).toHaveBeenCalled();
   });
 
   it('uses the voice channel at request time if the requester left voice during the lookup', async () => {
