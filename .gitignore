@@ -1,14 +1,26 @@
 # Dependencies
 node_modules/
 
-# Secrets and local configuration (see *.example.json)
+# Secrets and local configuration (see .env.example and easter-eggs.example.json)
+.env
+.env.*
+!.env.example
+easter-eggs.json
+
+# Each server's !setup choices (see SETTINGS_PATH)
+data/
+
+# Old configuration files from before 3.1. No longer used, but kept ignored so the secrets in them
+# are never committed.
 config.json
 spotify_config.json
 youtube_config.json
 billy_bot_token.txt
-.env
-.env.*
 
-# Runtime output
-songs/
+# Test and tooling output, and the bot's log file with its rotated copies (billybot.log.1.gz, …)
+coverage/
 *.log
+*.log.*
+
+# Song downloads from before 3.1 (songs are streamed now)
+songs/
