@@ -6,14 +6,24 @@ import queue from '../src/commands/queue.js';
 import skip from '../src/commands/skip.js';
 import {
   NOTHING_PLAYING,
+  NOT_ADMIN_LEAVE,
   PATCH_NOTES,
   QUEUE_EMPTY,
   SKIP_NOT_IN_VOICE,
 } from '../src/lib/replies.js';
-import { fakeGuildMessage, fakeSong } from './helpers/fakes.js';
+import {
+  OWNER_ID,
+  fakeGuildMessage,
+  fakeMember,
+  fakeSong,
+  fakeTextChannel,
+} from './helpers/fakes.js';
 
-function messageWith(player) {
+// By default a DJ in the music_bot channel, without Manage Server.
+function messageWith(player, { member, channel } = {}) {
   return fakeGuildMessage({
+    member,
+    channel,
     client: { players: { get: vi.fn(() => player) } },
   });
 }
@@ -45,6 +55,31 @@ describe('!patchnotes', () => {
 });
 
 describe('!skip', () => {
+  it('only works in the music channel', async () => {
+    const player = { skip: vi.fn(() => true) };
+    const message = messageWith(player, { channel: fakeTextChannel({ name: 'general' }) });
+    await skip.execute(message, []);
+    expect(player.skip).not.toHaveBeenCalled();
+    expect(message.channel.send).toHaveBeenCalledWith(
+      '<@300000000000000001> please use the music_bot channel to use BillyTube.',
+    );
+  });
+
+  it('needs the DJ role', async () => {
+    const player = { skip: vi.fn(() => true) };
+    const message = messageWith(player, { member: fakeMember({ roles: ['Member'] }) });
+    await skip.execute(message, []);
+    expect(player.skip).not.toHaveBeenCalled();
+    expect(message.channel.send.mock.calls[0][0]).toMatch(/required privleges/);
+  });
+
+  it('does not need the requester in voice', async () => {
+    const player = { skip: vi.fn(() => true) };
+    const message = messageWith(player, { member: fakeMember({ voiceChannel: null }) });
+    await skip.execute(message, []);
+    expect(player.skip).toHaveBeenCalled();
+  });
+
   it('needs the bot in voice', async () => {
     const message = messageWith(undefined);
     await skip.execute(message, []);
@@ -67,6 +102,15 @@ describe('!skip', () => {
 });
 
 describe('!queue', () => {
+  it('works for everyone, in any channel', async () => {
+    const message = messageWith(undefined, {
+      member: fakeMember({ roles: [], voiceChannel: null }),
+      channel: fakeTextChannel({ name: 'general' }),
+    });
+    await queue.execute(message, []);
+    expect(message.channel.send).toHaveBeenCalledWith(QUEUE_EMPTY);
+  });
+
   it.each([[undefined], [{ queue: [] }]])('says the queue is empty (%j)', async (player) => {
     const message = messageWith(player);
     await queue.execute(message, []);
@@ -146,16 +190,36 @@ describe('!queue', () => {
 });
 
 describe('!leave', () => {
-  it('leaves without a reply', async () => {
+  const admin = () => fakeMember({ manageServer: true, roles: [] });
+
+  it('leaves without a reply for a member with Manage Server, from any channel', async () => {
     const player = { destroy: vi.fn() };
-    const message = messageWith(player);
+    const message = messageWith(player, {
+      member: admin(),
+      channel: fakeTextChannel({ name: 'general' }),
+    });
     await leave.execute(message, []);
     expect(player.destroy).toHaveBeenCalled();
     expect(message.channel.send).not.toHaveBeenCalled();
   });
 
+  it('leaves for the server owner', async () => {
+    const player = { destroy: vi.fn() };
+    const message = messageWith(player, { member: fakeMember({ id: OWNER_ID }) });
+    await leave.execute(message, []);
+    expect(player.destroy).toHaveBeenCalled();
+  });
+
+  it('refuses everyone else, DJs included', async () => {
+    const player = { destroy: vi.fn() };
+    const message = messageWith(player);
+    await leave.execute(message, []);
+    expect(player.destroy).not.toHaveBeenCalled();
+    expect(message.channel.send).toHaveBeenCalledWith(NOT_ADMIN_LEAVE);
+  });
+
   it('does nothing when the bot is not in voice', async () => {
-    const message = messageWith(undefined);
+    const message = messageWith(undefined, { member: admin() });
     await expect(leave.execute(message, [])).resolves.toBeUndefined();
     expect(message.channel.send).not.toHaveBeenCalled();
   });

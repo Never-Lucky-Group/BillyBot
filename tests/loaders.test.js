@@ -10,6 +10,7 @@ describe('loadCommands', () => {
       'patchnotes',
       'play',
       'queue',
+      'setup',
       'skip',
     ]);
     for (const command of commands.values()) expect(isCommand(command)).toBe(true);

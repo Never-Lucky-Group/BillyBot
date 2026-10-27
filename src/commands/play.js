@@ -1,29 +1,9 @@
 import { logger } from '../lib/logger.js';
-import {
-  DOWNLOAD_FAILED,
-  NOT_IN_VOICE,
-  SPOTIFY_UNSUPPORTED,
-  UNSUPPORTED_LINK,
-  notDj,
-  wrongChannel,
-} from '../lib/replies.js';
+import { DOWNLOAD_FAILED, SPOTIFY_UNSUPPORTED, UNSUPPORTED_LINK } from '../lib/replies.js';
 import { editOrSend, remove, send } from '../lib/send.js';
+import { musicDenial } from '../music/access.js';
 import { addedToQueueEmbed, searchingEmbed } from '../music/embeds.js';
 import { parsePlayLink } from '../music/links.js';
-
-// !play only works in a channel with this name, for members with a role of this name.
-export const MUSIC_CHANNEL_NAME = 'music_bot';
-export const DJ_ROLE_NAME = 'DJ';
-
-// Why the author may not use !play here, as a reply, or null if they may.
-export function playDenial(message) {
-  if (message.channel.name !== MUSIC_CHANNEL_NAME) return wrongChannel(message.author);
-  if (!message.member.voice.channel) return NOT_IN_VOICE;
-  if (!message.member.roles.cache.some((role) => role.name === DJ_ROLE_NAME)) {
-    return notDj(message.author);
-  }
-  return null;
-}
 
 // Returns the stream, or null if it could not be opened; the player then opens it again later.
 function openEarly(media, videoUrl, guildId) {
@@ -38,7 +18,8 @@ function openEarly(media, videoUrl, guildId) {
 export default {
   name: 'play',
   async execute(message, args) {
-    const denial = playDenial(message);
+    // In the music channel, in voice, with the DJ role.
+    const denial = musicDenial(message, { needsVoice: true });
     if (denial) {
       await send(message.channel, denial);
       return;

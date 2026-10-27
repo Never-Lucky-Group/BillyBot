@@ -21,6 +21,9 @@ const RECONNECT_TIMEOUT_MS = 5_000;
 // How long before the playing song ends to open the next song's stream. yt-dlp takes several
 // seconds to start, so opening it early lets the next song follow without a gap.
 export const PRELOAD_LEAD_MS = 20_000;
+// The bot leaves voice after this long with nothing playing, for servers where nobody can make it
+// leave (!leave is for admins). It leaves silently, like !leave.
+export const IDLE_LEAVE_MS = 30 * 60_000;
 
 const VOICE_PERMISSIONS = PermissionFlagsBits.Connect | PermissionFlagsBits.Speak;
 
@@ -65,6 +68,8 @@ export class GuildPlayer {
   #preloadDue = false;
   // Song → its "Searching…" card, until the card is turned into the result.
   #statusMessages = new Map();
+  // Runs out IDLE_LEAVE_MS after the last song ends, unless another starts first.
+  #idleTimer = null;
 
   // voiceChannel and textChannel are where the first song was requested; later songs play in the
   // same channels.
@@ -150,6 +155,7 @@ export class GuildPlayer {
     this.#destroyed = true;
     this.queue.length = 0;
     this.#cancelPreload();
+    this.#cancelIdleLeave();
     for (const message of this.#statusMessages.values()) void remove(message);
     this.#statusMessages.clear();
     const entry = this.current;
@@ -164,7 +170,12 @@ export class GuildPlayer {
   }
 
   async #playNext() {
-    if (this.#starting || this.current || this.#destroyed || this.queue.length === 0) return;
+    if (this.#starting || this.current || this.#destroyed) return;
+    if (this.queue.length === 0) {
+      this.#scheduleIdleLeave();
+      return;
+    }
+    this.#cancelIdleLeave();
     this.#starting = true;
     let entry = null;
     let song = null;
@@ -301,6 +312,21 @@ export class GuildPlayer {
       // Tried again when the song's turn comes.
       logger.warn({ err: error, guildId: this.guildId }, 'Could not preload the next song');
     }
+  }
+
+  // Only while in voice with nothing playing or starting: a long song is never "idle".
+  #scheduleIdleLeave() {
+    if (this.#idleTimer || !this.#connection || this.current || this.#starting) return;
+    this.#idleTimer = setTimeout(() => {
+      this.#idleTimer = null;
+      logger.info({ guildId: this.guildId }, 'Nothing played for 30 minutes; leaving');
+      this.destroy();
+    }, IDLE_LEAVE_MS);
+  }
+
+  #cancelIdleLeave() {
+    clearTimeout(this.#idleTimer);
+    this.#idleTimer = null;
   }
 
   #clearPreloadTimer() {

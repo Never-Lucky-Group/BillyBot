@@ -20,6 +20,7 @@ describe('loadEnv', () => {
       easterEggsPath: 'easter-eggs.json',
       ytdlpPath: 'yt-dlp',
       ffmpegPath: 'ffmpeg',
+      settingsPath: 'data/settings.json',
     });
   });
 
@@ -39,6 +40,7 @@ describe('loadEnv', () => {
         EASTER_EGGS_PATH: '/etc/billybot/eggs.json',
         YTDLP_PATH: '/usr/local/bin/yt-dlp',
         FFMPEG_PATH: '/usr/bin/ffmpeg',
+        SETTINGS_PATH: '/var/lib/billybot/settings.json',
       }),
     ).toEqual({
       token: 'token',
@@ -47,6 +49,7 @@ describe('loadEnv', () => {
       easterEggsPath: '/etc/billybot/eggs.json',
       ytdlpPath: '/usr/local/bin/yt-dlp',
       ffmpegPath: '/usr/bin/ffmpeg',
+      settingsPath: '/var/lib/billybot/settings.json',
     });
   });
 

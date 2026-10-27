@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events';
 import { AudioPlayerStatus, VoiceConnectionStatus } from '@discordjs/voice';
 import { Collection } from 'discord.js';
 import { vi } from 'vitest';
+import { SettingsStore } from '../../src/settings/store.js';
 
 // Minimal stand-ins for discord.js and @discordjs/voice objects: only what the bot's code reads.
 
@@ -10,6 +11,7 @@ export const VOICE_CHANNEL_ID = '200000000000000001';
 export const TEXT_CHANNEL_ID = '200000000000000002';
 export const USER_ID = '300000000000000001';
 export const BOT_USER_ID = '300000000000000099';
+export const OWNER_ID = '300000000000000777';
 
 export const flush = () => new Promise((resolve) => setImmediate(resolve));
 
@@ -23,14 +25,23 @@ export function fakeSentMessage() {
   return message;
 }
 
-export function fakeTextChannel({ name = 'music_bot' } = {}) {
-  return { id: TEXT_CHANNEL_ID, name, send: vi.fn(() => Promise.resolve(fakeSentMessage())) };
+export function fakeTextChannel({ name = 'music_bot', id = TEXT_CHANNEL_ID } = {}) {
+  return { id, name, send: vi.fn(() => Promise.resolve(fakeSentMessage())) };
 }
 
-export function fakeGuild({ voiceStates = [] } = {}) {
+// `channels` and `roles` are what the server's caches hold, e.g. [{ id, name }].
+export function fakeGuild({
+  voiceStates = [],
+  channels = [],
+  roles = [],
+  ownerId = OWNER_ID,
+} = {}) {
   return {
     id: GUILD_ID,
+    ownerId,
     members: { me: { id: BOT_USER_ID } },
+    channels: { cache: new Collection(channels.map((channel) => [channel.id, channel])) },
+    roles: { cache: new Collection(roles.map((role) => [role.id, role])) },
     voiceAdapterCreator: () => ({}),
     voiceStates: { cache: new Collection(voiceStates.map((state) => [state.id, state])) },
     client: { user: { id: BOT_USER_ID } },
@@ -145,14 +156,29 @@ export function fakeMedia() {
   };
 }
 
-export function fakeMember({ roles = ['DJ'], voiceChannel = fakeVoiceChannel() } = {}) {
+// `roles` are role names, or { id, name } for roles a test refers to by ID. `manageServer` gives the
+// member the Manage Server permission.
+export function fakeMember({
+  id = USER_ID,
+  roles = ['DJ'],
+  voiceChannel = fakeVoiceChannel(),
+  guild = voiceChannel?.guild ?? fakeGuild(),
+  manageServer = false,
+} = {}) {
+  const roleObjects = roles.map((role, index) =>
+    typeof role === 'string' ? { id: `5000000000000000${index}`, name: role } : role,
+  );
   return {
+    id,
+    guild,
     voice: { channel: voiceChannel },
-    roles: { cache: new Collection(roles.map((name, index) => [String(index), { name }])) },
+    roles: { cache: new Collection(roleObjects.map((role) => [role.id, role])) },
+    permissions: { has: vi.fn(() => manageServer) },
   };
 }
 
-// A server message. `client` holds what index.js attaches: settings, commands, media, players.
+// A server message. `client` holds what index.js attaches: settings, settingsStore, commands, media,
+// players. The settings store is empty (no !setup) unless one is given.
 export function fakeGuildMessage({
   content = '!play',
   member = fakeMember(),
@@ -163,7 +189,7 @@ export function fakeGuildMessage({
     content,
     channel: channel ?? fakeTextChannel(),
     member,
-    guild: member.voice.channel?.guild ?? fakeGuild(),
+    guild: member.guild,
     author: {
       id: USER_ID,
       username: 'billyfan',
@@ -171,7 +197,11 @@ export function fakeGuildMessage({
       toString: () => `<@${USER_ID}>`,
       send: vi.fn(() => Promise.resolve({})),
     },
-    client: { settings: { prefix: '!' }, ...client },
+    client: {
+      settings: { prefix: '!' },
+      settingsStore: new SettingsStore('unused-settings.json'),
+      ...client,
+    },
     inGuild: () => true,
   };
 }

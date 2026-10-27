@@ -76,7 +76,7 @@ The repository's history was rewritten for 3.1, so an existing checkout cannot `
    nano .env   # DISCORD_TOKEN = "token" from the old config.json; PREFIX = its "prefix"
    ```
 
-4. Copy `easter-eggs.json` into the folder (it is not in the repository; see `easter-eggs.example.json` for the format). Without it, the bot runs with easter eggs off.
+4. Copy `easter-eggs.json` into the folder (it is not in the repository; see `easter-eggs.example.json` for the format). Without it, the bot runs with easter eggs off. When moving an existing install, also copy `data/settings.json` if it exists: it holds each server's `!setup` choices.
 
 5. Install the service. Edit the copy and replace `YOUR_USER`, `/path/to/BillyBot` and, if `which node` printed something else, `/usr/bin/node`:
 
@@ -109,16 +109,21 @@ The repository's history was rewritten for 3.1, so an existing checkout cannot `
 
 Settings are environment variables in `.env`, checked when the bot starts. An invalid value stops the bot with a message saying what is wrong.
 
-| Variable           | Default            | Meaning                                                   |
-| ------------------ | ------------------ | --------------------------------------------------------- |
-| `DISCORD_TOKEN`    | (required)         | The bot token (Developer Portal → Bot → Reset Token)      |
-| `PREFIX`           | `!`                | What every command starts with                            |
-| `LOG_LEVEL`        | `info`             | `fatal`, `error`, `warn`, `info`, `debug` or `trace`      |
-| `EASTER_EGGS_PATH` | `easter-eggs.json` | The easter-egg DM replies; easter eggs are off if missing |
-| `YTDLP_PATH`       | `yt-dlp`           | The yt-dlp program, if it is not on the service's `PATH`  |
-| `FFMPEG_PATH`      | `ffmpeg`           | The ffmpeg program, if it is not on the service's `PATH`  |
+| Variable           | Default              | Meaning                                                       |
+| ------------------ | -------------------- | ------------------------------------------------------------- |
+| `DISCORD_TOKEN`    | (required)           | The bot token (Developer Portal → Bot → Reset Token)          |
+| `PREFIX`           | `!`                  | What every command starts with                                |
+| `LOG_LEVEL`        | `info`               | `fatal`, `error`, `warn`, `info`, `debug` or `trace`          |
+| `EASTER_EGGS_PATH` | `easter-eggs.json`   | The easter-egg DM replies; easter eggs are off if missing     |
+| `SETTINGS_PATH`    | `data/settings.json` | Each server's `!setup` choices; created by the first `!setup` |
+| `YTDLP_PATH`       | `yt-dlp`             | The yt-dlp program, if it is not on the service's `PATH`      |
+| `FFMPEG_PATH`      | `ffmpeg`             | The ffmpeg program, if it is not on the service's `PATH`      |
 
 Restart the service after changing `.env` or `easter-eggs.json`.
+
+### Server settings (`!setup`)
+
+Each server's music channel and DJ role, chosen in Discord with `!setup`, are saved in `data/settings.json` in the bot's folder (or `SETTINGS_PATH`). Servers that never ran `!setup` are not in it and use the defaults: a channel named `music_bot` and a role named `DJ`. The bot writes the file itself and never needs a restart for a change. It is not in git, so `git pull` keeps it, but a fresh clone does not: copy it across, and keep a backup if the settings matter. If the file is ever invalid, the bot refuses to start (rather than overwrite it) and says why in the log; fix or delete it, and deleted servers go back to the defaults.
 
 ## Running the service
 

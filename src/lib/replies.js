@@ -12,10 +12,15 @@ export const PATCH_NOTES =
   '- !play now shows a 🔎 Searching… card right away, which turns into Now Playing or Added to Queue.\n' +
   '- Fixed bugs that could crash BillyBot or leave it stuck in a voice channel.\n' +
   '- !queue now shows the song that is playing and how far into it it is.\n' +
+  '- Server owners and admins can choose the music channel and DJ role with !setup.\n' +
+  '- !skip now needs the music channel and DJ role, like !play.\n' +
+  '- !leave is now for admins only.\n' +
+  '- BillyBot leaves by itself after 30 minutes without music.\n' +
   '- Spotify links are no longer supported.\n';
 
-// !play
-export const wrongChannel = (user) => `${user} please use the music_bot channel to use BillyTube.`;
+// !play and !skip. `channel` is the server's music channel: a mention, or "music_bot" by default.
+export const wrongChannel = (user, channel) =>
+  `${user} please use the ${channel} channel to use BillyTube.`;
 export const NOT_IN_VOICE = 'You need to be in a voice channel to play Billy.';
 export const notDj = (user) =>
   `${user} I'm sorrrry. You don't have the required privleges to use BillyTube.`;
@@ -33,6 +38,15 @@ export const VOICE_CONNECT_FAILED = "I couldn't connect to the voice channel. Pl
 export const SKIP_NOT_IN_VOICE = 'I need to be in a voice channel to skip songs.';
 export const NOTHING_PLAYING = 'There is no active song playing.';
 export const QUEUE_EMPTY = 'The queue is currently empty.';
+
+// !setup and !leave. New in 3.1: !leave used to work for everyone.
+export const notAdminSetup = (prefix) =>
+  `Only the server owner or members with Manage Server can use ${prefix}setup.`;
+export const NOT_ADMIN_LEAVE =
+  'Only the server owner or members with Manage Server can make BillyBot leave.';
+export const setupNotYours = (prefix) =>
+  `Only the person who opened this setup panel can use it. Run ${prefix}setup to open your own.`;
+export const SETUP_SAVE_FAILED = "Couldn't save the settings. Please try again.";
 
 // Direct messages
 export const DM_NOT_UNDERSTOOD = "I don't understand what you are saying.";

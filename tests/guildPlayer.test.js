@@ -1,7 +1,7 @@
 import { AudioPlayerStatus, StreamType, VoiceConnectionStatus } from '@discordjs/voice';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DOWNLOAD_FAILED, NO_VOICE_PERMISSION, VOICE_CONNECT_FAILED } from '../src/lib/replies.js';
-import { GuildPlayer, PRELOAD_LEAD_MS } from '../src/music/guildPlayer.js';
+import { GuildPlayer, IDLE_LEAVE_MS, PRELOAD_LEAD_MS } from '../src/music/guildPlayer.js';
 import {
   fakeMedia,
   fakeSentMessage,
@@ -507,5 +507,75 @@ describe('GuildPlayer status card', () => {
     voice.player.startPlaying();
     await flush();
     expect(embedTitles(textChannel)).toEqual(['🎶 Now Playing']);
+  });
+});
+
+describe('GuildPlayer idle leave', () => {
+  beforeEach(() => vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] }));
+  afterEach(() => vi.useRealTimers());
+
+  async function finishedLastSong() {
+    const setup = setUp();
+    setup.player.enqueue(fakeSong('Only'));
+    await flush();
+    setup.voice.player.startPlaying();
+    setup.voice.player.finish();
+    await flush();
+    return setup;
+  }
+
+  it('leaves silently after 30 minutes with nothing playing', async () => {
+    const { player, textChannel, onDestroy } = await finishedLastSong();
+    const sentBefore = textChannel.send.mock.calls.length;
+
+    vi.advanceTimersByTime(IDLE_LEAVE_MS - 1);
+    expect(player.destroyed).toBe(false);
+    vi.advanceTimersByTime(1);
+
+    expect(player.destroyed).toBe(true);
+    expect(onDestroy).toHaveBeenCalledOnce();
+    expect(textChannel.send.mock.calls.length).toBe(sentBefore);
+  });
+
+  it('starts the 30 minutes again after a song played meanwhile', async () => {
+    const { player, voice } = await finishedLastSong();
+    vi.advanceTimersByTime(IDLE_LEAVE_MS - 60_000);
+    player.enqueue(fakeSong('Another'));
+    await flush();
+    voice.player.startPlaying();
+    vi.advanceTimersByTime(IDLE_LEAVE_MS);
+    expect(player.destroyed).toBe(false);
+
+    voice.player.finish();
+    await flush();
+    vi.advanceTimersByTime(IDLE_LEAVE_MS);
+    expect(player.destroyed).toBe(true);
+  });
+
+  it('never counts a long song as idle', async () => {
+    const { player, voice } = setUp();
+    player.enqueue({ ...fakeSong('Live'), duration: null });
+    await flush();
+    voice.player.startPlaying();
+    vi.advanceTimersByTime(3 * IDLE_LEAVE_MS);
+    expect(player.destroyed).toBe(false);
+  });
+
+  it('counts the time after skipping the last song as idle', async () => {
+    const { player, voice } = setUp();
+    player.enqueue(fakeSong('Only'));
+    await flush();
+    voice.player.startPlaying();
+    player.skip();
+    await flush();
+    vi.advanceTimersByTime(IDLE_LEAVE_MS);
+    expect(player.destroyed).toBe(true);
+  });
+
+  it('stops the timer when the bot leaves another way first', async () => {
+    const { player, onDestroy } = await finishedLastSong();
+    player.destroy();
+    vi.advanceTimersByTime(IDLE_LEAVE_MS);
+    expect(onDestroy).toHaveBeenCalledOnce();
   });
 });

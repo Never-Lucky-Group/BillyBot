@@ -7,6 +7,7 @@ import { loadCommands } from './loaders/commands.js';
 import { loadEvents } from './loaders/events.js';
 import { createMedia } from './music/media.js';
 import { PlayerRegistry } from './music/players.js';
+import { SettingsStore } from './settings/store.js';
 
 async function main() {
   const env = loadEnv();
@@ -16,6 +17,8 @@ async function main() {
   // Attached to the client so commands and event handlers can reach them via message.client.
   client.settings = { prefix: env.prefix };
   client.easterEggs = await loadEasterEggs(env.easterEggsPath);
+  // Each server's music channel and DJ role, from !setup.
+  client.settingsStore = await SettingsStore.load(env.settingsPath);
   client.commands = await loadCommands();
   client.media = createMedia({ ytdlpPath: env.ytdlpPath, ffmpegPath: env.ffmpegPath });
   client.players = new PlayerRegistry({ media: client.media });
@@ -31,6 +34,7 @@ async function main() {
       commands: client.commands.size,
       events: eventCount,
       easterEggs: client.easterEggs?.size ?? 0,
+      serversWithSetup: client.settingsStore.size,
     },
     'Starting bot',
   );

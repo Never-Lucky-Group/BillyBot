@@ -6,16 +6,18 @@ A Discord music bot ("BillyTube") that plays YouTube links in a voice channel. B
 
 Commands start with the prefix (`!` by default) and must be typed exactly, e.g. `!play`, not `!Play` or `!playlist`.
 
-| Command                | What it does                                                                                                                                                                                                                                                                     |
-| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `!play <YouTube link>` | Shows a "🔎 Searching…" card right away, then joins your voice channel and plays the song (the card becomes Now Playing), or adds it to the queue (the card becomes Added to Queue). Only in the `music_bot` channel, for members with the `DJ` role who are in a voice channel. |
-| `!skip`                | Skips to the next song in the queue.                                                                                                                                                                                                                                             |
-| `!queue`               | Shows the song playing and how far into it, then the next 10 songs and how many are queued.                                                                                                                                                                                      |
-| `!leave`               | Leaves the voice channel and clears the queue.                                                                                                                                                                                                                                   |
-| `!help`                | DMs you the list of commands.                                                                                                                                                                                                                                                    |
-| `!patchnotes`          | Posts the latest patch notes.                                                                                                                                                                                                                                                    |
+| Command                | Who, and where                           | What it does                                                                                                                                                                         |
+| ---------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `!play <YouTube link>` | DJs in voice, in the music channel       | Shows a "🔎 Searching…" card right away, then joins your voice channel and plays the song (the card becomes Now Playing), or adds it to the queue (the card becomes Added to Queue). |
+| `!skip`                | DJs, in the music channel                | Skips to the next song in the queue.                                                                                                                                                 |
+| `!queue`               | Everyone, anywhere                       | Shows the song playing and how far into it, then the next 10 songs and how many are queued.                                                                                          |
+| `!leave`               | Server owner and Manage Server, anywhere | Leaves the voice channel and clears the queue.                                                                                                                                       |
+| `!setup`               | Server owner and Manage Server, anywhere | Posts a panel whose **Change settings** button opens a form to choose the server's music channel and DJ role (see below).                                                            |
+| `!help`                | Everyone, anywhere                       | DMs you the list of commands.                                                                                                                                                        |
+| `!patchnotes`          | Everyone, anywhere                       | Posts the latest patch notes.                                                                                                                                                        |
 
-- The bot leaves by itself when nobody else is left in its voice channel.
+- **Music channel and DJ role:** by default a channel named `music_bot` and a role named `DJ`, as before 3.1. `!setup` picks a specific channel and role instead; leaving a picker empty goes back to the default, and picking `@everyone` as the DJ role lets anyone use `!play` and `!skip`. If the chosen channel or role is deleted, the default applies again. Only the member who ran `!setup` can use its panel, which stops taking clicks after 14 minutes without one.
+- The bot leaves by itself when nobody else is left in its voice channel, or after 30 minutes with nothing playing.
 - YouTube video links work in any common form (`youtube.com/watch`, `youtu.be`, Shorts, YouTube Music). Playlist and channel links do not.
 - Spotify links are no longer supported (since 3.1); the bot says so.
 - DMs to the bot: `help` and `patchnotes` work there too, plus the easter eggs.
@@ -53,11 +55,14 @@ src/
   index.js          startup and shutdown
   client.js         Discord client and intents
   config.js         .env and easter-eggs.json, checked with zod
+  settings/         each server's !setup choices (data/settings.json)
+  setup/            the !setup panel and its form
   commands/         one file per prefix command
   events/           Discord event handlers (messages, voice state, ready, errors)
   handlers/         prefix command dispatch, DM replies
   loaders/          load commands/ and events/ at startup
-  music/            per-server player and queue, link parsing, yt-dlp/ffmpeg, embeds
+  music/            per-server player and queue, who may use which command, link parsing,
+                    yt-dlp/ffmpeg, embeds
   lib/              logger, reply texts, safe send, duration formatting
 tests/              Vitest tests, with fakes for Discord, voice and child processes
 deploy/             systemd service and logrotate templates

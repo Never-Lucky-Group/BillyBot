@@ -1,12 +1,12 @@
 import { readFile } from 'node:fs/promises';
 import { z } from 'zod';
 
-// Thrown when environment variables or easter-eggs.json are missing or invalid.
+// Thrown when environment variables, easter-eggs.json or the settings file are missing or invalid.
 export class ConfigError extends Error {
   name = 'ConfigError';
 }
 
-const snowflake = z.string().regex(/^\d{17,20}$/, 'Expected a Discord ID (17-20 digits)');
+export const snowflake = z.string().regex(/^\d{17,20}$/, 'Expected a Discord ID (17-20 digits)');
 
 // Treats `KEY=` (empty value in .env) the same as an unset variable so defaults apply.
 const optionalEnv = (schema) => z.preprocess((value) => (value === '' ? undefined : value), schema);
@@ -20,9 +20,10 @@ const envSchema = z.object({
   EASTER_EGGS_PATH: optionalEnv(z.string().default('easter-eggs.json')),
   YTDLP_PATH: optionalEnv(z.string().default('yt-dlp')),
   FFMPEG_PATH: optionalEnv(z.string().default('ffmpeg')),
+  SETTINGS_PATH: optionalEnv(z.string().default('data/settings.json')),
 });
 
-// Returns { token, prefix, logLevel, easterEggsPath, ytdlpPath, ffmpegPath }.
+// Returns { token, prefix, logLevel, easterEggsPath, ytdlpPath, ffmpegPath, settingsPath }.
 export function loadEnv(source = process.env) {
   const result = envSchema.safeParse(source);
   if (!result.success) {
@@ -35,6 +36,7 @@ export function loadEnv(source = process.env) {
     easterEggsPath: result.data.EASTER_EGGS_PATH,
     ytdlpPath: result.data.YTDLP_PATH,
     ffmpegPath: result.data.FFMPEG_PATH,
+    settingsPath: result.data.SETTINGS_PATH,
   };
 }
 
